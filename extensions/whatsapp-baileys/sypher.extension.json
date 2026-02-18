@@ -1,0 +1,7 @@
+{
+  "id": "whatsapp-baileys",
+  "version": "1.0.0",
+  "sypher_mini_version": ">=0.1.0",
+  "capabilities": ["channel"],
+  "entry": "dist/index.js"
+}

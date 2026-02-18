@@ -1,0 +1,17 @@
+{
+  "name": "sypher-mini-whatsapp-baileys",
+  "version": "1.0.0",
+  "description": "WhatsApp Baileys channel for Sypher-mini",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
