@@ -144,6 +144,8 @@ To run commands in directories outside the default workspace (e.g. `E:\demo`), a
 
 **Git discovery:** The agent can find git repos via exec, e.g. `find . -name .git -type d` (Unix) or `dir /s /b .git` (Windows), or `git rev-parse --show-toplevel` when already inside a repo.
 
+**Platform commands:** The agent receives runtime context (OS, shell) automatically. See [PLATFORMS.md](PLATFORMS.md) for the command compatibility matrix.
+
 ---
 
 ## API Keys

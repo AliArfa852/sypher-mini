@@ -20,6 +20,7 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/task"
 	"github.com/sypherexx/sypher-mini/pkg/tools"
 	"github.com/sypherexx/sypher-mini/pkg/policy"
+	"github.com/sypherexx/sypher-mini/pkg/platform"
 	"github.com/sypherexx/sypher-mini/pkg/replay"
 )
 
@@ -160,7 +161,7 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
 				Name:        "exec",
-				Description: "Execute a shell command and return its output. Use with caution. Commands run in the workspace.",
+				Description: "Execute a shell command and return its output. Commands run in the workspace. Use platform-appropriate syntax (Windows: cmd; Linux/macOS: sh). See runtime context in system prompt.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -701,16 +702,22 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 	}
 	bootstrap := LoadBootstrapFiles(workspace, agentID)
 
+	platformCtx := platform.AgentContext()
+
 	hardRules := `## Hard Rules (non-overridable)
 - ALWAYS use tools for actions; never pretend to execute
 - Be helpful and accurate
 - Use memory file for persistent info
 - For messaging channels (WhatsApp, etc.): send ONE consolidated reply per user message; avoid calling the message tool multiple times in one turn`
 
+	parts := []string{}
 	if bootstrap != "" {
-		return bootstrap + "\n\n" + hardRules
+		parts = append(parts, bootstrap)
+	} else {
+		parts = append(parts, "You are Sypher, a coding-centric AI assistant.")
 	}
-	return "You are Sypher, a coding-centric AI assistant.\n\n" + hardRules
+	parts = append(parts, platformCtx, hardRules)
+	return strings.Join(parts, "\n\n")
 }
 
 // Stop stops the agent loop.
