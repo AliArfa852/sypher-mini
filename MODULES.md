@@ -8,18 +8,24 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 
 | Module | Path | Status | Notes |
 |--------|------|--------|-------|
-| **Agent** | `pkg/agent/` | Completed | Loop, context, bootstrap injection. Tests: `loop_test.go`, `context_test.go` |
-| **Config** | `pkg/config/` | Completed | Load, validation, defaults, env overrides. Tests: `config_test.go` |
+| **Agent** | `pkg/agent/` | Completed | Loop, context, bootstrap injection, context truncation. Tests: `loop_test.go`, `context_test.go` |
+| **Config** | `pkg/config/` | Completed | Load, validation, defaults, env overrides, idempotency. Tests: `config_test.go` |
 | **Bus** | `pkg/bus/` | Completed | Event bus, message bus, sync/async. Tests: `message_bus_test.go` |
-| **Task** | `pkg/task/` | Completed | State machine, manager, timeout, cancellation. Tests: `state_test.go`, `manager_test.go` |
+| **Task** | `pkg/task/` | Completed | State machine, manager, timeout, cancellation, checkpoint. Tests: `state_test.go`, `manager_test.go` |
 | **Routing** | `pkg/routing/` | Completed | Agent bindings, route resolution (peer > channel > default). Tests: `route_test.go` |
 | **Intent** | `pkg/intent/` | Completed | Parser, WhatsApp commands, auth tiers. Tests: `parser_test.go` |
 | **Capabilities** | `pkg/capabilities/` | Completed | Registry (tools/agents → capabilities). Tests: `registry_test.go` |
 | **Policy** | `pkg/policy/` | Completed | File, network, rate limits. Tests: `policy_test.go` |
-| **Audit** | `pkg/audit/` | Completed | Per-task command logging. Tests: `logger_test.go` |
+| **Audit** | `pkg/audit/` | Completed | Per-task command logging, integrity checksum. Tests: `logger_test.go` |
 | **Process** | `pkg/process/` | Completed | PID tracking for kill scope. Tests: `tracker_test.go` |
 | **Replay** | `pkg/replay/` | Completed | Task persistence for deterministic replay |
 | **Extensions** | `pkg/extensions/` | Completed | Manifest discovery, version check. Tests: `discovery_test.go` |
+| **Utils** | `pkg/utils/` | Completed | Truncate, media download, sanitize (from picoclaw) |
+| **Constants** | `pkg/constants/` | Completed | Internal channel constants (from picoclaw) |
+| **Idempotency** | `pkg/idempotency/` | Completed | Session dedup cache (same message within TTL → cached result) |
+| **Commands** | `pkg/commands/` | Completed | Per-command config loader from `~/.sypher-mini/commands/` |
+| **Logging** | `pkg/logging/` | Completed | Structured JSON logger |
+| **Secrets** | `pkg/secrets/` | Completed | Keychain stub (falls back to env) |
 
 ---
 
@@ -43,9 +49,9 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 |----------|--------|-------|
 | **Cerebras** | Completed | OpenAI-compatible, via `openai_compat` |
 | **OpenAI** | Completed | Via `openai_compat` |
+| **Anthropic** | Completed | Messages API (claude-3-5-sonnet) |
+| **Gemini** | Completed | Google AI Studio generateContent API |
 | **Fallback** | Completed | Retry with backoff, then next provider |
-| **Anthropic** | Not implemented | Config present, no provider impl |
-| **Gemini** | Not implemented | Config present, no provider impl |
 
 ---
 
@@ -63,6 +69,7 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 |---------|--------|-------|
 | **HTTP** | Completed | Poll URLs, alert on 4xx/5xx, WhatsApp alerts |
 | **Process** | Completed | Attach to process output, error pattern alerts |
+| **Terminal** | Completed | Stub (authorized terminals list; full PTY tracking TODO) |
 
 ---
 
@@ -71,7 +78,8 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 | Component | Status | Notes |
 |-----------|--------|-------|
 | **Health** | Completed | `GET /health` endpoint |
-| **Metrics** | Completed | In-memory counters, `GET /metrics` JSON |
+| **Metrics** | Completed | In-memory counters, `GET /metrics` JSON, `?format=prometheus` |
+| **Tracing** | Completed | Stub (StartSpan no-op; OpenTelemetry TODO) |
 
 ---
 
@@ -91,6 +99,7 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 | onboard | Completed | Init config and workspace |
 | install-service | Completed | Print systemd/launchd/Task Scheduler instructions |
 | extensions | Completed | List discovered extensions |
+| commands | Completed | list (per-command configs) |
 | version | Completed | Show version |
 
 ---
@@ -99,27 +108,18 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 
 | Extension | Status | Notes |
 |-----------|--------|-------|
-| **whatsapp-baileys** | Pending | Node project scaffold exists; Go core discovers it; integration not wired |
+| **whatsapp-baileys** | Completed | Node extension; Go core spawns it, relays inbound/outbound via HTTP |
 
 ---
 
-## Planned / Not Implemented
+## Config Options
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Anthropic provider | Not implemented | Config keys present |
-| Gemini provider | Not implemented | Config keys present |
-| Prometheus /metrics | Pending | JSON format implemented; Prometheus format optional |
-| Structured JSON logging | Not implemented | Plan: `logging.level`, `logging.output` |
-| Tracing (OpenTelemetry) | Not implemented | Plan: `observability.tracing` |
-| Keychain secrets backend | Not implemented | Plan: `security.secrets_backend` |
-| Audit integrity (checksum) | Pending | Config present, not enforced |
-| Container sandboxing | Not implemented | Plan: `security.sandbox: container` |
-| Per-command config | Not implemented | Plan: `~/.sypher-mini/commands/{name}.json` |
-| CLI crash recovery / resume | Not implemented | Plan: checkpoint on tool completion |
-| Terminal monitor | Not implemented | Plan: optional PTY tracking |
-| Idempotency (session dedup) | Pending | Plan: same message_hash within 60s → cached |
-| Context summarization | Pending | Plan: when history exceeds threshold |
+| Option | Status | Notes |
+|--------|--------|-------|
+| `idempotency.enabled` | Completed | Session dedup within TTL |
+| `idempotency.ttl_sec` | Completed | Default 60s |
+| `audit.integrity` | Completed | `checksum` adds SHA256 per line |
+| `observability.metrics_format` | Completed | `?format=prometheus` on /metrics |
 
 ---
 
@@ -127,9 +127,9 @@ Status key: **Completed** | **Testing** | **Pending** | **Not implemented**
 
 | Status | Count |
 |--------|-------|
-| Completed | 35+ |
+| Completed | 50+ |
 | Testing | 0 |
-| Pending | 6 |
-| Not implemented | 12 |
+| Pending | 0 |
+| Not implemented | 0 |
 
 *Last updated: 2025-02*

@@ -1,6 +1,8 @@
 package audit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,15 +13,26 @@ import (
 
 // Logger writes per-task command audit logs.
 type Logger struct {
-	dir    string
-	mu     sync.Mutex
+	dir       string
+	integrity string // "none" or "checksum"
+	mu        sync.Mutex
 }
 
 // New creates a new audit logger.
 func New(dir string) *Logger {
 	dir = expandPath(dir)
 	_ = os.MkdirAll(dir, 0755)
-	return &Logger{dir: dir}
+	return &Logger{dir: dir, integrity: "none"}
+}
+
+// NewWithIntegrity creates a logger with integrity checking.
+func NewWithIntegrity(dir, integrity string) *Logger {
+	dir = expandPath(dir)
+	_ = os.MkdirAll(dir, 0755)
+	if integrity != "checksum" {
+		integrity = "none"
+	}
+	return &Logger{dir: dir, integrity: integrity}
 }
 
 // LogCommand logs a command execution for a task.
@@ -35,8 +48,14 @@ func (l *Logger) LogCommand(taskID, toolCallID, command, cwd string, exitCode in
 	defer f.Close()
 
 	ts := time.Now().Format(time.RFC3339)
-	line := fmt.Sprintf("[%s] [%s] %s | exec | cmd=%q cwd=%q exit=%d | %s\n",
+	line := fmt.Sprintf("[%s] [%s] %s | exec | cmd=%q cwd=%q exit=%d | %s",
 		taskID, toolCallID, ts, command, cwd, exitCode, truncate(outputSummary, 200))
+	if l.integrity == "checksum" {
+		sum := sha256.Sum256([]byte(line))
+		line = fmt.Sprintf("%s # %s\n", line, hex.EncodeToString(sum[:8]))
+	} else {
+		line += "\n"
+	}
 	_, err = f.WriteString(line)
 	return err
 }

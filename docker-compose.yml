@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  sypher-mini:
+    build: .
+    image: sypher-mini:latest
+    container_name: sypher-mini
+    ports:
+      - "18790:18790"
+    environment:
+      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - sypher-mini-data:/home/sypher/.sypher-mini
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:18790/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  sypher-mini-data:

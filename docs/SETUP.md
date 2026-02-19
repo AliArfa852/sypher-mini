@@ -8,12 +8,13 @@ Complete step-by-step setup for Sypher-mini on Windows, macOS, and Linux.
 
 1. [Prerequisites](#prerequisites)
 2. [Installation](#installation)
-3. [Initial Configuration](#initial-configuration)
-4. [API Keys](#api-keys)
-5. [First Run](#first-run)
-6. [Gateway Mode](#gateway-mode)
-7. [WhatsApp Setup](#whatsapp-setup)
-8. [Troubleshooting](#troubleshooting)
+3. [Build & Clean](#build--clean)
+4. [Initial Configuration](#initial-configuration)
+5. [API Keys](#api-keys)
+6. [First Run](#first-run)
+7. [Gateway Mode](#gateway-mode)
+8. [WhatsApp Setup](#whatsapp-setup)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -78,6 +79,22 @@ Download from [Releases](https://github.com/sypherexx/sypher-mini/releases) for 
 - `sypher-linux-arm64`
 - `sypher-darwin-amd64`
 - `sypher-darwin-arm64`
+
+### Build & clean
+
+Build automatically installs and builds Node extensions (e.g. WhatsApp Baileys).
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build extensions + sypher (Linux/macOS/Git Bash) |
+| `make extensions` | Install and build Node extensions only |
+| `make clean` | Remove build artifacts, Go cache, extension node_modules |
+| `make rebuild` | Clean then build |
+| `make test` | Run tests |
+| `.\build.ps1 build` | Build extensions + sypher (Windows PowerShell) |
+| `.\build.ps1 rebuild` | Clean then build |
+| `go build -o sypher ./cmd/sypher` | Direct build (no extensions) |
+| `go clean -cache` | Clean Go cache |
 
 ---
 
@@ -229,7 +246,20 @@ curl http://localhost:18790/health
 
 ## WhatsApp Setup
 
-### Option 1: WebSocket bridge
+### Option 1: Baileys (recommended) — `sypher whatsapp --connect`
+
+The simplest path: run the connect command, then start the gateway.
+
+```bash
+sypher whatsapp --connect --allow-from +1234567890
+sypher gateway
+```
+
+Scan the QR code in the terminal with WhatsApp (Settings → Linked Devices). Auth is saved to `~/.sypher-mini/whatsapp-auth/`.
+
+See [docs/WHATSAPP.md](WHATSAPP.md) for details.
+
+### Option 2: WebSocket bridge
 
 1. Run a WhatsApp bridge (e.g. [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) or similar) that exposes a WebSocket.
 2. Edit config:
@@ -247,10 +277,6 @@ curl http://localhost:18790/health
 ```
 
 3. Start gateway: `sypher gateway`
-
-### Option 2: Baileys extension
-
-See [docs/WHATSAPP.md](WHATSAPP.md) for full Baileys setup.
 
 ---
 

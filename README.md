@@ -87,6 +87,33 @@ export OPENAI_API_KEY="your-key"
 ./sypher agent -m "What is 2+2?"
 ```
 
+### 6. Docker (optional)
+
+```bash
+# Build and run
+docker-compose up -d
+
+# Or build image only
+docker build -t sypher-mini .
+docker run -p 18790:18790 -v sypher-mini-data:/home/sypher/.sypher-mini sypher-mini
+```
+
+Copy `.env.example` to `.env` and set your API keys before `docker-compose up`.
+
+### Build & clean
+
+```bash
+make build      # Build extensions + sypher (Linux/macOS/Git Bash)
+make extensions # Install and build Node extensions (WhatsApp Baileys)
+make clean      # Remove build artifacts, Go cache, extension node_modules
+make rebuild    # Clean then build
+make test       # Run tests
+```
+
+**Windows (PowerShell):** `.\build.ps1 build`, `.\build.ps1 rebuild`, etc.
+
+Build automatically runs `npm install` and `npm run build` in each extension, so WhatsApp Baileys is ready when the agent is built.
+
 ## Commands
 
 | Command | Description |
@@ -95,6 +122,7 @@ export OPENAI_API_KEY="your-key"
 | `sypher agent -m "msg"` | One-shot message |
 | `sypher agent` | Interactive agent loop |
 | `sypher gateway` | Start gateway (HTTP, WhatsApp bridge) |
+| `sypher whatsapp --connect` | Configure WhatsApp (Baileys) |
 | `sypher status` | Show config and status |
 | `sypher config get <path>` | Read config value |
 | `sypher config set <path> <value>` | Write config value |
@@ -146,6 +174,8 @@ See [MODULES.md](MODULES.md) for a complete list of implemented modules and thei
 
 | Document | Description |
 |----------|-------------|
+| [BREAKDOWN.md](BREAKDOWN.md) | Every command, service connection, workspace |
+| [COMMANDS.md](docs/COMMANDS.md) | CLI reference |
 | [SETUP.md](docs/SETUP.md) | Full setup guide (install, configure, run) |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Complete config reference |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture and design |
@@ -159,6 +189,19 @@ See [MODULES.md](MODULES.md) for a complete list of implemented modules and thei
 ~/.sypher-mini/
 ├── config.json           # Main config
 ├── workspace/            # Default agent workspace
+│   ├── AGENTS.md         # Role/instructions
+│   ├── AGENT.md          # Alias for AGENTS.md
+│   ├── SOUL.md           # Personality, values
+│   ├── USER.md           # User context
+│   ├── IDENTITY.md       # Override identity
+│   ├── HEARTBEAT.md      # Optional heartbeat checklist
+│   ├── TOOLS.md          # Tool descriptions
+│   ├── memory/           # Daily memory
+│   ├── sessions/         # Session metadata/transcripts
+│   ├── state/            # Persistent state
+│   ├── cron/             # Scheduled jobs
+│   ├── skills/           # Workspace skills
+│   └── code-projects/    # Project context
 ├── workspace-{agent_id}/ # Per-agent workspace (optional)
 ├── audit/                # Per-task command logs
 ├── replay/               # Stored task replays (if enabled)
@@ -173,6 +216,8 @@ See [MODULES.md](MODULES.md) for a complete list of implemented modules and thei
 | `SOUL.md` | Personality, values, identity |
 | `USER.md` | User context |
 | `IDENTITY.md` | Override identity |
+| `HEARTBEAT.md` | Optional heartbeat checklist |
+| `TOOLS.md` | Tool guidance |
 
 ## Security
 

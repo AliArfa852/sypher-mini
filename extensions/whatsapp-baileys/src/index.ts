@@ -6,10 +6,11 @@
  * Config: Core sets extensions.whatsapp_baileys.url (e.g. http://localhost:3002)
  */
 
-import makeWASocket, { useMultiFileAuthState } from '@whiskeysockets/baileys';
-import * as fs from 'fs';
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import pino from 'pino';
 import * as path from 'path';
 import * as http from 'http';
+import qrcode from 'qrcode-terminal';
 
 const AUTH_DIR = process.env.SYPHER_WHATSAPP_AUTH || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.sypher-mini', 'whatsapp-auth');
 const PORT = parseInt(process.env.PORT || '3002', 10);
@@ -39,22 +40,32 @@ async function sendToCore(payload: InboundPayload) {
 
 async function connect() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { version } = await fetchLatestBaileysVersion();
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
+    version,
+    logger: pino({ level: 'silent' }),
+    syncFullHistory: false,
   });
 
   sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update', (update: { connection?: string; lastDisconnect?: { error?: { output?: { statusCode?: number } } } }) => {
+  sock.ev.on('connection.update', (update) => {
+    if (update.qr) {
+      console.log('\nScan QR with WhatsApp (Settings → Linked Devices):\n');
+      qrcode.generate(update.qr, { small: true });
+    }
     const status = update.connection;
-    const err = update.lastDisconnect?.error;
+    const err = update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined;
     if (status === 'close' && err?.output?.statusCode !== 401) {
       console.log('Reconnecting...');
       setTimeout(connect, 3000);
+    } else if (status === 'open') {
+      console.log('WhatsApp connected.');
     }
   });
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const m of messages) {
+      if (m.key.fromMe) continue;
       if (m.message?.conversation || m.message?.extendedTextMessage?.text) {
         const text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
         const from = m.key.remoteJid || '';

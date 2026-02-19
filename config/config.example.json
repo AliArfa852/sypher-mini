@@ -32,6 +32,7 @@
     "whatsapp": {
       "enabled": false,
       "bridge_url": "ws://localhost:3001",
+      "baileys_url": "http://localhost:3002",
       "use_baileys": false,
       "allow_from": [],
       "operators": [],

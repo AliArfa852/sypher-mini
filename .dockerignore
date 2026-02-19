@@ -1,0 +1,15 @@
+.git
+.gitignore
+*.md
+.env
+.env.*
+!.env.example
+extensions/
+build/
+dist/
+*.log
+.DS_Store
+.idea
+.vscode
+*.test
+coverage.out

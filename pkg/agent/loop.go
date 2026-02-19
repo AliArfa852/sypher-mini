@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/sypherexx/sypher-mini/pkg/audit"
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/config"
+	"github.com/sypherexx/sypher-mini/pkg/idempotency"
 	"github.com/sypherexx/sypher-mini/pkg/intent"
 	"github.com/sypherexx/sypher-mini/pkg/observability"
 	"github.com/sypherexx/sypher-mini/pkg/process"
@@ -36,9 +38,10 @@ type Loop struct {
 	auditLogger *audit.Logger
 	procTracker *process.Tracker
 	policyEval  *policy.Evaluator
-	replayWriter *replay.Writer
-	safeMode    bool
-	running     atomic.Bool
+	replayWriter  *replay.Writer
+	idempotency   *idempotency.Cache
+	safeMode      bool
+	running       atomic.Bool
 }
 
 // LoopOptions configures the agent loop.
@@ -62,7 +65,11 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	if auditDir == "" {
 		auditDir = config.ExpandPath("~/.sypher-mini/audit")
 	}
-	auditLogger := audit.New(auditDir)
+	integrity := cfg.Audit.Integrity
+	if integrity == "" {
+		integrity = "none"
+	}
+	auditLogger := audit.NewWithIntegrity(auditDir, integrity)
 	procTracker := process.New()
 	execTool := tools.NewExecTool(cfg, auditLogger, procTracker, opts.SafeMode)
 	killTool := tools.NewKillTool(procTracker, opts.SafeMode)
@@ -73,6 +80,15 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	streamCommand := tools.NewStreamCommandTool(cfg, msgBus, messageTool, opts.SafeMode)
 	replayWriter := replay.NewWriter(cfg)
 	metrics := observability.NewMetrics()
+
+	var idemCache *idempotency.Cache
+	if cfg.Idempotency.Enabled {
+		ttl := 60
+		if cfg.Idempotency.TTLSec > 0 {
+			ttl = cfg.Idempotency.TTLSec
+		}
+		idemCache = idempotency.New(time.Duration(ttl) * time.Second)
+	}
 
 	return &Loop{
 		cfg:         cfg,
@@ -87,6 +103,7 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		tailOutput:    tailOutput,
 		streamCommand: streamCommand,
 		replayWriter:  replayWriter,
+		idempotency:   idemCache,
 		metrics:       metrics,
 		auditLogger: auditLogger,
 		procTracker: procTracker,
@@ -256,6 +273,13 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 		sessionKey = "agent:" + agentID + ":" + msg.Channel + ":" + msg.ChatID
 	}
 
+	// Idempotency: return cached result if same message within TTL
+	if l.idempotency != nil {
+		if _, result, ok := l.idempotency.Get(sessionKey, msg.Content); ok {
+			return result, nil
+		}
+	}
+
 	// Create task (pending -> authorized)
 	t := l.taskMgr.Create(agentID, sessionKey)
 	t.Transition(task.StateAuthorized)
@@ -313,6 +337,11 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			if t.IsCancelled() {
 				t.Transition(task.StateKilled)
 				return context.Canceled
+			}
+
+			// Context summarization: truncate when over threshold (rough: 4 chars = 1 token)
+			if thresh := l.cfg.Context.SummarizeThreshold; thresh > 0 {
+				messages = truncateMessages(messages, thresh)
 			}
 
 			toolsDef := l.toolDefinitions()
@@ -441,6 +470,10 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			Status: "completed",
 		})
 	}
+	if l.idempotency != nil {
+		l.idempotency.Set(sessionKey, msg.Content, t.ID, result)
+		l.idempotency.Cleanup()
+	}
 	return result, nil
 }
 
@@ -512,6 +545,36 @@ func (l *Loop) handleWhatsAppCommand(ctx context.Context, cmd string, args []str
 	return "", nil
 }
 
+// truncateMessages keeps system + recent messages when total tokens exceed threshold.
+// Rough estimate: 4 chars = 1 token.
+func truncateMessages(messages []providers.Message, thresholdTokens int) []providers.Message {
+	if len(messages) <= 2 {
+		return messages
+	}
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content) / 4
+	}
+	if total <= thresholdTokens {
+		return messages
+	}
+	// Keep system (first) + last 6 messages
+	keep := 6
+	if len(messages) <= keep+1 {
+		return messages
+	}
+	out := make([]providers.Message, 0, keep+1)
+	if messages[0].Role == "system" {
+		out = append(out, messages[0])
+	}
+	start := len(messages) - keep
+	if start < 1 {
+		start = 1
+	}
+	out = append(out, messages[start:]...)
+	return out
+}
+
 // buildSystemPrompt builds the system prompt with bootstrap files and hard rules.
 func (l *Loop) buildSystemPrompt(agentID string) string {
 	workspace := l.cfg.Agents.Defaults.Workspace
@@ -523,7 +586,8 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 	hardRules := `## Hard Rules (non-overridable)
 - ALWAYS use tools for actions; never pretend to execute
 - Be helpful and accurate
-- Use memory file for persistent info`
+- Use memory file for persistent info
+- For messaging channels (WhatsApp, etc.): send ONE consolidated reply per user message; avoid calling the message tool multiple times in one turn`
 
 	if bootstrap != "" {
 		return bootstrap + "\n\n" + hardRules

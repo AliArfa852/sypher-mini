@@ -82,12 +82,15 @@ func (t *Task) IsTerminal() bool {
 	return s == StateCompleted || s == StateFailed || s == StateKilled || s == StateTimeout
 }
 
-// RunWithTimeout runs fn with a timeout. On timeout, transitions to StateTimeout.
+// RunWithTimeout runs fn with a timeout. Transitions to StateExecuting before running,
+// StateTimeout on timeout, or leaves as-is on success (caller transitions to StateCompleted).
 func (t *Task) RunWithTimeout(ctx context.Context, timeout time.Duration, fn func(context.Context) error) error {
 	if timeout <= 0 {
+		t.Transition(StateExecuting)
 		return fn(ctx)
 	}
 
+	t.Transition(StateExecuting)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

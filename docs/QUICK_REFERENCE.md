@@ -4,6 +4,30 @@ One-page cheat sheet.
 
 ---
 
+## Build & Clean
+
+```bash
+make build      # Build extensions + sypher (Linux/macOS/Git Bash)
+make extensions # Install and build Node extensions
+make clean      # Remove build/, Go cache, extension node_modules/dist
+make rebuild    # Clean then build
+make test       # Run tests
+make run        # Build and run gateway
+```
+
+```powershell
+.\build.ps1 build      # Windows PowerShell (extensions + binary)
+.\build.ps1 extensions # Extensions only
+.\build.ps1 rebuild
+```
+
+```bash
+go build -o sypher ./cmd/sypher    # Direct build (no extensions)
+go clean -cache                    # Clean Go cache
+```
+
+---
+
 ## Commands
 
 ```bash
@@ -11,6 +35,7 @@ sypher onboard
 sypher agent -m "message"
 sypher agent
 sypher gateway
+sypher whatsapp --connect [--allow-from +1234567890]
 sypher status
 sypher config get <path>
 sypher config set <path> <value>
@@ -64,6 +89,9 @@ sypher --safe gateway
 ~/.sypher-mini/
 ├── config.json
 ├── workspace/
+│   ├── AGENTS.md, AGENT.md, SOUL.md, USER.md, IDENTITY.md
+│   ├── HEARTBEAT.md, TOOLS.md
+│   ├── memory/, sessions/, state/, cron/, skills/, code-projects/
 ├── audit/
 ├── replay/
 └── whatsapp-auth/   (Baileys)
@@ -79,3 +107,5 @@ sypher --safe gateway
 | SOUL.md | Personality |
 | USER.md | User context |
 | IDENTITY.md | Override |
+| HEARTBEAT.md | Optional heartbeat |
+| TOOLS.md | Tool guidance |

@@ -23,8 +23,15 @@ type Config struct {
 	Policies            PoliciesConfig   `json:"policies,omitempty"`
 	Context             ContextConfig    `json:"context,omitempty"`
 	Monitors            MonitorsConfig  `json:"monitors,omitempty"`
-	Replay              ReplayConfig    `json:"replay,omitempty"`
+	Replay              ReplayConfig      `json:"replay,omitempty"`
+	Idempotency         IdempotencyConfig `json:"idempotency,omitempty"`
 	mu                  sync.RWMutex
+}
+
+// IdempotencyConfig holds session dedup config.
+type IdempotencyConfig struct {
+	Enabled bool `json:"enabled"`
+	TTLSec  int  `json:"ttl_sec"`
 }
 
 // ReplayConfig holds replay persistence config.
@@ -181,12 +188,13 @@ type ChannelsConfig struct {
 
 // WhatsAppConfig holds WhatsApp channel config.
 type WhatsAppConfig struct {
-	Enabled   bool     `json:"enabled"`
-	BridgeURL string   `json:"bridge_url"`
-	AllowFrom []string `json:"allow_from"`
-	Operators []string `json:"operators,omitempty"`
-	Admins    []string `json:"admins,omitempty"`
-	UseBaileys bool    `json:"use_baileys"`
+	Enabled    bool     `json:"enabled"`
+	BridgeURL  string   `json:"bridge_url"`
+	BaileysURL string   `json:"baileys_url"` // Extension HTTP endpoint, e.g. http://localhost:3002
+	AllowFrom  []string `json:"allow_from"`
+	Operators  []string `json:"operators,omitempty"`
+	Admins     []string `json:"admins,omitempty"`
+	UseBaileys bool     `json:"use_baileys"`
 }
 
 // ProvidersConfig holds LLM provider configs.

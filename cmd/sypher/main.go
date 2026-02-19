@@ -19,6 +19,7 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/channels"
 	"github.com/sypherexx/sypher-mini/pkg/config"
+	"github.com/sypherexx/sypher-mini/pkg/commands"
 	"github.com/sypherexx/sypher-mini/pkg/extensions"
 	"github.com/sypherexx/sypher-mini/pkg/monitor"
 	"github.com/sypherexx/sypher-mini/pkg/observability"
@@ -66,10 +67,14 @@ func main() {
 		cancelCmd(args)
 	case "onboard":
 		onboardCmd()
+	case "whatsapp":
+		whatsappCmd(args)
 	case "install-service":
 		installServiceCmd()
 	case "extensions":
 		extensionsCmd()
+	case "commands":
+		commandsCmd(args)
 	case "version", "-v", "--version":
 		fmt.Printf("sypher-mini %s\n", version)
 	default:
@@ -95,8 +100,10 @@ Commands:
   replay     Replay stored task (replay <task_id>)
   cancel     Cancel a running task (cancel <task_id>)
   onboard    Initialize config and workspace
+  whatsapp   WhatsApp setup (whatsapp --connect)
   install-service  Install auto-start service (systemd/launchd/Task Scheduler)
   extensions  List discovered extensions
+  commands   List per-command configs (commands list)
   version    Show version
 
 Global flags:
@@ -105,8 +112,7 @@ Global flags:
 Examples:
   sypher onboard
   sypher agent -m "Hello"
-  sypher --safe gateway
-`)
+  sypher --safe gateway`)
 }
 
 func loadConfig() *config.Config {
@@ -200,6 +206,12 @@ func gatewayCmd(args []string, safeMode bool) {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
+			format := r.URL.Query().Get("format")
+			if format == "prometheus" {
+				w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+				w.Write([]byte(m.PrometheusFormat()))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(m.Snapshot())
 		})
@@ -258,19 +270,43 @@ func gatewayCmd(args []string, safeMode bool) {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	if cfg.Channels.WhatsApp.Enabled && cfg.Channels.WhatsApp.BridgeURL != "" {
+	if cfg.Channels.WhatsApp.Enabled {
 		health.Set("whatsapp", "ok")
-		bridge := channels.NewWhatsAppBridge(cfg.Channels.WhatsApp.BridgeURL, msgBus, eventBus)
-		go func() {
-			_ = bridge.Run(ctx)
-		}()
-		fmt.Printf("Gateway running. WhatsApp bridge: %s\n", cfg.Channels.WhatsApp.BridgeURL)
+
+		if cfg.Channels.WhatsApp.UseBaileys {
+			// Baileys extension: inbound via /inbound, outbound via HTTP to extension
+			baileysURL := cfg.Channels.WhatsApp.BaileysURL
+			if baileysURL == "" {
+				baileysURL = "http://localhost:3002"
+			}
+			baileysClient := channels.NewWhatsAppBaileysClient(baileysURL, msgBus)
+			go func() {
+				_ = baileysClient.Run(ctx)
+			}()
+			// Optionally spawn extension subprocess
+			if extProc := channels.SpawnBaileysExtension(baileysURL, "http://localhost:18790/inbound"); extProc != nil {
+				go func() {
+					_ = extProc.Wait()
+				}()
+				fmt.Printf("Gateway running. WhatsApp Baileys: %s (extension spawned)\n", baileysURL)
+			} else {
+				fmt.Printf("Gateway running. WhatsApp Baileys: %s (run extension separately: cd extensions/whatsapp-baileys && npm start)\n", baileysURL)
+			}
+		} else if cfg.Channels.WhatsApp.BridgeURL != "" {
+			// WebSocket bridge
+			bridge := channels.NewWhatsAppBridge(cfg.Channels.WhatsApp.BridgeURL, msgBus, eventBus)
+			go func() {
+				_ = bridge.Run(ctx)
+			}()
+			fmt.Printf("Gateway running. WhatsApp bridge: %s\n", cfg.Channels.WhatsApp.BridgeURL)
+		} else {
+			fmt.Println("Gateway running. WhatsApp enabled but no bridge_url or use_baileys")
+		}
 
 		// Start HTTP monitors with WhatsApp alerts
 		for _, m := range cfg.Monitors.HTTP {
 			if m.AlertViaWhatsApp && m.URL != "" {
 				mon := monitor.NewHTTPMonitor(m, func(monitorID, message string) {
-					// Send alert to first allow_from number
 					chatID := "broadcast"
 					if len(cfg.Channels.WhatsApp.AllowFrom) > 0 {
 						chatID = cfg.Channels.WhatsApp.AllowFrom[0]
@@ -286,7 +322,7 @@ func gatewayCmd(args []string, safeMode bool) {
 		}
 	} else {
 		health.Set("whatsapp", "disabled")
-		fmt.Println("Gateway running. WhatsApp disabled (set channels.whatsapp.enabled and bridge_url)")
+		fmt.Println("Gateway running. WhatsApp disabled (set channels.whatsapp.enabled)")
 	}
 	fmt.Println("Health: http://localhost:18790/health")
 
@@ -489,7 +525,6 @@ func cancelCmd(args []string) {
 		return
 	}
 	taskID := args[0]
-	cfg := loadConfig()
 	url := "http://localhost:18790/cancel"
 	if v := os.Getenv("SYPHER_GATEWAY_URL"); v != "" {
 		url = v + "/cancel"
@@ -518,6 +553,57 @@ func cancelCmd(args []string) {
 	}
 }
 
+func whatsappCmd(args []string) {
+	connect := false
+	allowFrom := ""
+	for i, a := range args {
+		if a == "--connect" || a == "-connect" {
+			connect = true
+		}
+		if (a == "--allow-from" || a == "-allow-from") && i+1 < len(args) {
+			allowFrom = args[i+1]
+		}
+	}
+	if !connect {
+		fmt.Println("Usage: sypher whatsapp --connect [--allow-from +1234567890]")
+		fmt.Println("Configures WhatsApp (Baileys) and enables the channel.")
+		return
+	}
+
+	cfgPath := config.GetConfigPath()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg.Channels.WhatsApp.Enabled = true
+	cfg.Channels.WhatsApp.UseBaileys = true
+	if cfg.Channels.WhatsApp.BaileysURL == "" {
+		cfg.Channels.WhatsApp.BaileysURL = "http://localhost:3002"
+	}
+	if allowFrom != "" {
+		cfg.Channels.WhatsApp.AllowFrom = []string{allowFrom}
+	}
+
+	if err := cfg.Save(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("WhatsApp configured (Baileys).")
+	if len(cfg.Channels.WhatsApp.AllowFrom) > 0 {
+		fmt.Printf("Allow from: %v\n", cfg.Channels.WhatsApp.AllowFrom)
+	} else {
+		fmt.Println("Allow from: (empty = allow all — restrict in production)")
+	}
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Run: sypher gateway")
+	fmt.Println("  2. Scan the QR code in the terminal with WhatsApp (Settings → Linked Devices)")
+	fmt.Println("  3. Auth saved to ~/.sypher-mini/whatsapp-auth/")
+}
+
 func onboardCmd() {
 	path := config.GetConfigPath()
 	cfg := config.DefaultConfig()
@@ -526,6 +612,34 @@ func onboardCmd() {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create workspace: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Create workspace subdirectories (PicoClaw/OpenClaw alignment)
+	for _, sub := range []string{"memory", "sessions", "state", "cron", "skills", "code-projects"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create workspace subdir %s: %v\n", sub, err)
+			os.Exit(1)
+		}
+	}
+
+	// Create bootstrap template files if missing
+	bootstrapFiles := map[string]string{
+		"AGENTS.md":    "# Agent behavior guide\n\nEdit this file to define the agent's role, instructions, and how it should behave.\n",
+		"AGENT.md":     "# Agent role (alias for AGENTS.md)\n\nSame content as AGENTS.md. Edit to define the agent's role and instructions.\n",
+		"SOUL.md":      "# Agent soul\n\nPersonality, tone, values, and boundaries. Loaded every session.\n",
+		"USER.md":      "# User context\n\nWho the user is and how to address them. Loaded every session.\n",
+		"IDENTITY.md":  "# Agent identity\n\nThe agent's name, vibe, and identity. Optional override.\n",
+		"HEARTBEAT.md": "# Periodic tasks\n\nOptional checklist for heartbeat runs (when implemented). Keep short.\n",
+		"TOOLS.md":     "# Tool descriptions\n\nNotes about local tools and conventions. Guidance only; does not control tool availability.\n",
+	}
+	for name, content := range bootstrapFiles {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to create %s: %v\n", name, err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	configDir := ""
@@ -555,7 +669,6 @@ func onboardCmd() {
 }
 
 func installServiceCmd() {
-	cfg := loadConfig()
 	binPath, err := os.Executable()
 	if err != nil {
 		binPath = "sypher"
@@ -608,4 +721,28 @@ func extensionsCmd() {
 		}
 		fmt.Printf("  %s v%s%s\n", e.Manifest.ID, e.Manifest.Version, caps)
 	}
+}
+
+func commandsCmd(args []string) {
+	commandsDir := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		commandsDir = filepath.Join(home, ".sypher-mini", "commands")
+	}
+	if len(args) >= 1 && args[0] == "list" {
+		names, err := commands.List(commandsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Commands list error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(names) == 0 {
+			fmt.Println("No command configs (create ~/.sypher-mini/commands/{name}.json)")
+			return
+		}
+		fmt.Println("Available commands:")
+		for _, n := range names {
+			fmt.Printf("  %s\n", n)
+		}
+		return
+	}
+	fmt.Println("Usage: sypher commands list")
 }

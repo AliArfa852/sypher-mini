@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/sypherexx/sypher-mini/pkg/config"
+	"github.com/sypherexx/sypher-mini/pkg/providers/anthropic"
+	"github.com/sypherexx/sypher-mini/pkg/providers/gemini"
 	"github.com/sypherexx/sypher-mini/pkg/providers/openai_compat"
 )
 
@@ -16,12 +18,6 @@ const (
 	RoutingFastFirst     RoutingStrategy = "fast_first"
 	RoutingPowerfulFirst RoutingStrategy = "powerful_first"
 )
-
-// ProviderEntry holds a provider and its priority.
-type ProviderEntry struct {
-	Provider LLMProvider
-	Name     string
-}
 
 // NewProvider creates an LLM provider from config (first available).
 func NewProvider(cfg *config.Config) (LLMProvider, error) {
@@ -54,10 +50,10 @@ func listProviders(cfg *config.Config) []ProviderEntry {
 			if base == "" {
 				base = "https://api.cerebras.ai/v1"
 			}
-			entries = append(entries, ProviderEntry{
-				Provider: openai_compat.New("cerebras", key, base, "llama-3.1-70b"),
-				Name:     "cerebras",
-			})
+		entries = append(entries, ProviderEntry{
+			Provider: openai_compat.New("cerebras", key, base, "llama-3.1-70b"),
+			Name:     "cerebras",
+		})
 		}
 	}
 
@@ -69,6 +65,20 @@ func listProviders(cfg *config.Config) []ProviderEntry {
 		entries = append(entries, ProviderEntry{
 			Provider: openai_compat.New("openai", key, base, "gpt-4o-mini"),
 			Name:     "openai",
+		})
+	}
+
+	if key := getAPIKey("ANTHROPIC_API_KEY", cfg.Providers.Anthropic.APIKey); key != "" {
+		entries = append(entries, ProviderEntry{
+			Provider: anthropic.New(key, "claude-3-5-sonnet-20241022"),
+			Name:     "anthropic",
+		})
+	}
+
+	if key := getAPIKey("GEMINI_API_KEY", cfg.Providers.Gemini.APIKey); key != "" {
+		entries = append(entries, ProviderEntry{
+			Provider: gemini.New(key, "gemini-1.5-flash"),
+			Name:     "gemini",
 		})
 	}
 

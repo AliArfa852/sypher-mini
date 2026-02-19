@@ -91,6 +91,8 @@ npm install
 npm run build
 ```
 
+If you skip this step, the gateway will run `npm install` and `npm run build` automatically when spawning the extension (first run may take longer).
+
 #### 2. Configure environment
 
 | Variable | Default | Description |
@@ -99,37 +101,52 @@ npm run build
 | `SYPHER_CORE_CALLBACK` | `http://localhost:18790/inbound` | Gateway inbound URL |
 | `SYPHER_WHATSAPP_AUTH` | `~/.sypher-mini/whatsapp-auth` | Auth storage |
 
-#### 3. Start gateway first
+#### 3. Configure and start
 
-```bash
-sypher gateway
-```
-
-#### 4. Start Baileys extension
-
-```bash
-cd extensions/whatsapp-baileys
-npm start
-```
-
-#### 5. Pair with WhatsApp
-
-- A QR code appears in the terminal
-- Scan with WhatsApp (Settings → Linked Devices → Link a Device)
-- Auth is saved to `~/.sypher-mini/whatsapp-auth/`
-
-#### 6. Enable in config (optional)
+**Option A: Integrated (gateway auto-spawns extension)**
 
 ```json
 {
   "channels": {
     "whatsapp": {
       "enabled": true,
-      "use_baileys": true
+      "use_baileys": true,
+      "baileys_url": "http://localhost:3002",
+      "allow_from": ["+1234567890"]
     }
   }
 }
 ```
+
+```bash
+sypher gateway
+```
+
+The gateway will spawn the Baileys extension automatically (from `extensions/whatsapp-baileys`). Run from the project root so the extension can be found.
+
+**Option B: Manual (run extension separately)**
+
+```bash
+# Terminal 1: start gateway
+sypher gateway
+
+# Terminal 2: start Baileys extension
+cd extensions/whatsapp-baileys
+npm run build && npm start
+```
+
+#### 4. Pair with WhatsApp
+
+- A QR code appears in the terminal
+- Scan with WhatsApp (Settings → Linked Devices → Link a Device)
+- Auth is saved to `~/.sypher-mini/whatsapp-auth/`
+
+#### 5. Config reference
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `use_baileys` | `false` | Use Baileys extension instead of WebSocket bridge |
+| `baileys_url` | `http://localhost:3002` | Extension HTTP endpoint |
 
 ### Extension API
 

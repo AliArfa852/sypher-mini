@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sypherexx/sypher-mini/pkg/providers"
+	"github.com/sypherexx/sypher-mini/pkg/providers/types"
 )
 
 // Provider is an OpenAI-compatible API provider (OpenAI, Cerebras, etc.).
@@ -50,7 +50,7 @@ func New(name, apiKey, apiBase, defaultModel string) *Provider {
 }
 
 // Chat sends a chat completion request.
-func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, options map[string]interface{}) (*providers.LLMResponse, error) {
+func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []types.ToolDefinition, model string, options map[string]interface{}) (*types.LLMResponse, error) {
 	if p.apiKey == "" {
 		return nil, fmt.Errorf("%s: API key not configured", p.name)
 	}
@@ -118,7 +118,7 @@ func (p *Provider) GetDefaultModel() string {
 	return p.defaultModel
 }
 
-func parseResponse(body []byte) (*providers.LLMResponse, error) {
+func parseResponse(body []byte) (*types.LLMResponse, error) {
 	var apiResponse struct {
 		Choices []struct {
 			Message struct {
@@ -134,7 +134,7 @@ func parseResponse(body []byte) (*providers.LLMResponse, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage *providers.UsageInfo `json:"usage"`
+		Usage *types.UsageInfo `json:"usage"`
 	}
 
 	if err := json.Unmarshal(body, &apiResponse); err != nil {
@@ -142,14 +142,14 @@ func parseResponse(body []byte) (*providers.LLMResponse, error) {
 	}
 
 	if len(apiResponse.Choices) == 0 {
-		return &providers.LLMResponse{
+		return &types.LLMResponse{
 			Content:      "",
 			FinishReason: "stop",
 		}, nil
 	}
 
 	choice := apiResponse.Choices[0]
-	toolCalls := make([]providers.ToolCall, 0, len(choice.Message.ToolCalls))
+	toolCalls := make([]types.ToolCall, 0, len(choice.Message.ToolCalls))
 	for _, tc := range choice.Message.ToolCalls {
 		arguments := make(map[string]interface{})
 		name := ""
@@ -159,14 +159,14 @@ func parseResponse(body []byte) (*providers.LLMResponse, error) {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &arguments)
 			}
 		}
-		toolCalls = append(toolCalls, providers.ToolCall{
+		toolCalls = append(toolCalls, types.ToolCall{
 			ID:        tc.ID,
 			Name:      name,
 			Arguments: arguments,
 		})
 	}
 
-	return &providers.LLMResponse{
+	return &types.LLMResponse{
 		Content:      choice.Message.Content,
 		ToolCalls:    toolCalls,
 		FinishReason: choice.FinishReason,
