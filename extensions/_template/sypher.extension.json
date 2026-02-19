@@ -1,0 +1,11 @@
+{
+  "id": "my-extension",
+  "version": "1.0.0",
+  "sypher_mini_version": ">=0.1.0",
+  "capabilities": [],
+  "entry": "dist/index.js",
+  "runtime": "node",
+  "node_min": "20",
+  "setup": "scripts/setup",
+  "start": "scripts/start"
+}

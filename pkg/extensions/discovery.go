@@ -41,7 +41,7 @@ func Discover(extensionsDir string) ([]DiscoveredExtension, error) {
 
 	var result []DiscoveredExtension
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), "_") {
 			continue
 		}
 		manifestPath := filepath.Join(extDir, e.Name(), "sypher.extension.json")

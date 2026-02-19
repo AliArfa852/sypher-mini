@@ -23,12 +23,21 @@ func TestDiscover(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Create _template (should be excluded)
+	templateDir := filepath.Join(extDir, "_template")
+	if err := os.MkdirAll(templateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(templateDir, "sypher.extension.json"), []byte(`{"id":"_template","entry":"dist/index.js"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	exts, err := Discover(extDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(exts) != 1 {
-		t.Fatalf("expected 1 extension, got %d", len(exts))
+		t.Fatalf("expected 1 extension (excluding _template), got %d", len(exts))
 	}
 	if exts[0].Manifest.ID != "test-ext" {
 		t.Errorf("expected id test-ext, got %s", exts[0].Manifest.ID)

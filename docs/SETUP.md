@@ -7,14 +7,15 @@ Complete step-by-step setup for Sypher-mini on Windows, macOS, and Linux.
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Installation](#installation)
-3. [Build & Clean](#build--clean)
-4. [Initial Configuration](#initial-configuration)
-5. [API Keys](#api-keys)
-6. [First Run](#first-run)
-7. [Gateway Mode](#gateway-mode)
-8. [WhatsApp Setup](#whatsapp-setup)
-9. [Troubleshooting](#troubleshooting)
+2. [Platform setup](#platform-setup)
+3. [Installation](#installation)
+4. [Build & Clean](#build--clean)
+5. [Initial Configuration](#initial-configuration)
+6. [API Keys](#api-keys)
+7. [First Run](#first-run)
+8. [Gateway Mode](#gateway-mode)
+9. [WhatsApp Setup](#whatsapp-setup)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -39,6 +40,79 @@ Complete step-by-step setup for Sypher-mini on Windows, macOS, and Linux.
 ```bash
 go version   # Should show go1.22 or higher
 git --version
+```
+
+### Platform setup
+
+#### macOS (Homebrew)
+
+```bash
+# Install Homebrew (if needed): https://brew.sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Go (for sypher binary)
+brew install go
+
+# Node.js 20+ (for WhatsApp Baileys extension)
+brew install node@20
+# Link if needed: brew link node@20 --force --overwrite
+# Or use latest: brew install node
+
+# Verify
+go version   # go1.22+
+node -v      # v20.x or higher
+npm -v
+```
+
+#### Linux (Debian/Ubuntu, Raspberry Pi)
+
+```bash
+# Go
+sudo apt-get update
+sudo apt-get install -y golang-go
+
+# Node.js 20+ (distro default is often 18; use NodeSource)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Verify
+go version   # go1.22+
+node -v     # v20.x or higher
+npm -v
+```
+
+Alternative (nvm, no sudo):
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+nvm install 20
+nvm use 20
+```
+
+#### Windows (cmd)
+
+```cmd
+REM Go: https://go.dev/dl/ — download .msi, run installer, add C:\Go\bin to PATH
+REM Or via winget:
+winget install GoLang.Go
+
+REM Node.js 20+: https://nodejs.org/ — download LTS .msi, run installer
+REM Or via winget:
+winget install OpenJS.NodeJS.LTS
+
+REM Verify (new cmd window after install)
+go version
+node -v
+npm -v
+```
+
+Build from project root:
+
+```cmd
+cd path\to\sypher-mini
+.\build.ps1 build
+REM Or manually: cd extensions\whatsapp-baileys && npm install && npm run build
+go build -o sypher.exe .\cmd\sypher
 ```
 
 ---

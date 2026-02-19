@@ -1,0 +1,5 @@
+#!/bin/sh
+# Check Node version
+node -e "const v=process.versions.node.split('.')[0]; if(parseInt(v)<20) { console.error('Node 20+ required'); process.exit(1); }"
+npm install
+npm run build
