@@ -490,8 +490,9 @@ Via WhatsApp or `sypher agent -m "..."`:
 
 ### "no LLM provider configured"
 
-- Set at least one API key in config or environment
-- Verify env var is exported: `echo $CEREBRAS_API_KEY` (Linux/macOS) or `echo $env:CEREBRAS_API_KEY` (PowerShell)
+- Set at least one API key: `GEMINI_API_KEY`, `CEREBRAS_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`
+- Copy `.env.example` to `.env`, add your key, then run `sypher agent` again
+- Verify env var: `echo $GEMINI_API_KEY` (Linux/macOS) or `echo $env:GEMINI_API_KEY` (PowerShell)
 
 ### "Command blocked by safety guard"
 

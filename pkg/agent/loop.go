@@ -369,7 +369,7 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			if l.safeMode {
 				result = fmt.Sprintf("Received: %q (LLM disabled in safe mode)", msg.Content)
 			} else {
-				result = fmt.Sprintf("Received: %q (no LLM provider configured - set CEREBRAS_API_KEY or OPENAI_API_KEY)", msg.Content)
+				result = fmt.Sprintf("Received: %q (no LLM provider configured - set GEMINI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY)", msg.Content)
 			}
 			return nil
 		}
