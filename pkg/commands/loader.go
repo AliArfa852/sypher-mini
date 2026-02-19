@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // CommandConfig defines a single command from ~/.sypher-mini/commands/{name}.json.
@@ -21,8 +22,22 @@ func Load(commandsDir, name string) (*CommandConfig, error) {
 		home, _ := os.UserHomeDir()
 		commandsDir = filepath.Join(home, ".sypher-mini", "commands")
 	}
+	// Prevent path traversal: reject names with .., /, or \
+	if name == "" || name == "." || name == ".." ||
+		strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return nil, os.ErrNotExist
+	}
 	path := filepath.Join(commandsDir, name+".json")
-	data, err := os.ReadFile(path)
+	pathClean := filepath.Clean(path)
+	dirAbs, _ := filepath.Abs(commandsDir)
+	pathAbs, _ := filepath.Abs(pathClean)
+	if dirAbs != "" && pathAbs != "" {
+		rel, err := filepath.Rel(dirAbs, pathAbs)
+		if err != nil || rel == ".." || (len(rel) >= 2 && rel[:2] == "..") {
+			return nil, os.ErrNotExist
+		}
+	}
+	data, err := os.ReadFile(pathClean)
 	if err != nil {
 		return nil, err
 	}

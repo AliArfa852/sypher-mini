@@ -43,7 +43,35 @@ func normalizeModel(model string) string {
 	return model
 }
 
-// Chat sends a request to Gemini generateContent API.
+// toGeminiTools converts our tool definitions to Gemini functionDeclarations format.
+func toGeminiTools(tools []types.ToolDefinition) []map[string]interface{} {
+	if len(tools) == 0 {
+		return nil
+	}
+	var decls []map[string]interface{}
+	for _, t := range tools {
+		if t.Type != "function" || t.Function.Name == "" {
+			continue
+		}
+		params := t.Function.Parameters
+		if params == nil {
+			params = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+		}
+		decls = append(decls, map[string]interface{}{
+			"name":        t.Function.Name,
+			"description": t.Function.Description,
+			"parameters":  params,
+		})
+	}
+	if len(decls) == 0 {
+		return nil
+	}
+	return []map[string]interface{}{
+		{"functionDeclarations": decls},
+	}
+}
+
+// Chat sends a request to Gemini generateContent API with function calling support.
 func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []types.ToolDefinition, model string, options map[string]interface{}) (*types.LLMResponse, error) {
 	if p.apiKey == "" {
 		return nil, fmt.Errorf("gemini: API key not configured")
@@ -56,24 +84,9 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []t
 	}
 
 	// Convert to Gemini format: contents with role and parts
-	var contents []map[string]interface{}
-	var systemInstruction string
-	for _, m := range messages {
-		if m.Role == "system" {
-			systemInstruction = m.Content
-			continue
-		}
-		if m.Role == "tool" {
-			continue
-		}
-		role := "user"
-		if m.Role == "assistant" {
-			role = "model"
-		}
-		contents = append(contents, map[string]interface{}{
-			"role": role,
-			"parts": []map[string]interface{}{{"text": m.Content}},
-		})
+	contents, err := toGeminiContents(messages)
+	if err != nil {
+		return nil, fmt.Errorf("convert messages: %w", err)
 	}
 
 	reqBody := map[string]interface{}{
@@ -82,10 +95,22 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []t
 			"maxOutputTokens": maxTokens,
 		},
 	}
+
+	var systemInstruction string
+	for _, m := range messages {
+		if m.Role == "system" {
+			systemInstruction = m.Content
+			break
+		}
+	}
 	if systemInstruction != "" {
 		reqBody["systemInstruction"] = map[string]interface{}{
 			"parts": []map[string]interface{}{{"text": systemInstruction}},
 		}
+	}
+
+	if geminiTools := toGeminiTools(tools); len(geminiTools) > 0 {
+		reqBody["tools"] = geminiTools
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -119,12 +144,97 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []t
 	return parseResponse(body)
 }
 
+// toGeminiContents converts our messages to Gemini contents, including tool calls and responses.
+func toGeminiContents(messages []types.Message) ([]map[string]interface{}, error) {
+	var contents []map[string]interface{}
+	var pendingToolResponses []map[string]interface{}
+	toolCallIDToName := make(map[string]string)
+
+	for i := 0; i < len(messages); i++ {
+		m := messages[i]
+		switch m.Role {
+		case "system":
+			// Handled separately as systemInstruction
+			continue
+		case "user":
+			if len(pendingToolResponses) > 0 {
+				contents = append(contents, map[string]interface{}{
+					"role":  "user",
+					"parts": pendingToolResponses,
+				})
+				pendingToolResponses = nil
+			}
+			contents = append(contents, map[string]interface{}{
+				"role":  "user",
+				"parts": []map[string]interface{}{{"text": m.Content}},
+			})
+		case "assistant":
+			if len(m.ToolCalls) > 0 {
+				for _, tc := range m.ToolCalls {
+					toolCallIDToName[tc.ID] = tc.Name
+				}
+				parts := make([]map[string]interface{}, 0, len(m.ToolCalls)+1)
+				if m.Content != "" {
+					parts = append(parts, map[string]interface{}{"text": m.Content})
+				}
+				for _, tc := range m.ToolCalls {
+					args := tc.Arguments
+					if args == nil {
+						args = map[string]interface{}{}
+					}
+					parts = append(parts, map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": tc.Name,
+							"args": args,
+						},
+					})
+				}
+				contents = append(contents, map[string]interface{}{
+					"role":  "model",
+					"parts": parts,
+				})
+			} else if m.Content != "" {
+				contents = append(contents, map[string]interface{}{
+					"role":  "model",
+					"parts": []map[string]interface{}{{"text": m.Content}},
+				})
+			}
+		case "tool":
+			name := toolCallIDToName[m.ToolCallID]
+			if name == "" {
+				name = "exec" // fallback
+			}
+			pendingToolResponses = append(pendingToolResponses, map[string]interface{}{
+				"functionResponse": map[string]interface{}{
+					"name": name,
+					"response": map[string]interface{}{
+						"result": m.Content,
+					},
+				},
+			})
+		}
+	}
+	// If we ended with tool responses, add a user turn with them
+	if len(pendingToolResponses) > 0 {
+		contents = append(contents, map[string]interface{}{
+			"role":  "user",
+			"parts": pendingToolResponses,
+		})
+	}
+
+	return contents, nil
+}
+
 func parseResponse(body []byte) (*types.LLMResponse, error) {
 	var apiResp struct {
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text         string                 `json:"text"`
+					FunctionCall *struct {
+						Name string                 `json:"name"`
+						Args map[string]interface{} `json:"args"`
+					} `json:"functionCall"`
 				} `json:"parts"`
 			} `json:"content"`
 			FinishReason string `json:"finishReason"`
@@ -141,9 +251,23 @@ func parseResponse(body []byte) (*types.LLMResponse, error) {
 	}
 
 	var content, finishReason string
+	var toolCalls []types.ToolCall
+	toolCallID := 0
+
 	if len(apiResp.Candidates) > 0 {
 		for _, p := range apiResp.Candidates[0].Content.Parts {
-			content += p.Text
+			if p.Text != "" {
+				content += p.Text
+			}
+			if p.FunctionCall != nil {
+				toolCallID++
+				toolCalls = append(toolCalls, types.ToolCall{
+					ID:        fmt.Sprintf("call_%d", toolCallID),
+					Type:      "function",
+					Name:      p.FunctionCall.Name,
+					Arguments: p.FunctionCall.Args,
+				})
+			}
 		}
 		finishReason = apiResp.Candidates[0].FinishReason
 	}
@@ -159,6 +283,7 @@ func parseResponse(body []byte) (*types.LLMResponse, error) {
 
 	return &types.LLMResponse{
 		Content:      content,
+		ToolCalls:    toolCalls,
 		FinishReason: finishReason,
 		Usage:        usage,
 	}, nil

@@ -146,6 +146,12 @@ func (t *ExecTool) Execute(ctx context.Context, req Request) Response {
 			"Command is required.",
 			CodePermissionDenied, false)
 	}
+	if len(cmdStr) > 32*1024 {
+		return ErrorResponse(req.ToolCallID,
+			"Command too long (max 32KB)",
+			"Command exceeds maximum length.",
+			CodePermissionDenied, false)
+	}
 
 	workingDir, _ := req.Args["working_dir"].(string)
 	if workingDir == "" {

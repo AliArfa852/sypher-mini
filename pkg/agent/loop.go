@@ -704,8 +704,18 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 
 	platformCtx := platform.AgentContext()
 
+	toolsSummary := `## Available Tools (use these for actions)
+- exec: Execute shell commands (mkdir, git init, etc.). Use for file ops and running commands.
+- kill: Kill a process by PID (only PIDs from exec).
+- web_fetch: Fetch content from a URL.
+- message: Send a reply to the user.
+- tail_output: Read last N lines from a file.
+- stream_command: Run allowed commands with streaming output.
+- invoke_cli_agent: Invoke a configured CLI agent for code generation (only when agent has command/args).`
+
 	hardRules := `## Hard Rules (non-overridable)
-- ALWAYS use tools for actions; never pretend to execute
+- ALWAYS use tools for actions; never pretend to execute or output pseudocode
+- Call tools by their exact names (exec, kill, web_fetch, message, tail_output, stream_command, invoke_cli_agent)
 - Be helpful and accurate
 - Use memory file for persistent info
 - For messaging channels (WhatsApp, etc.): send ONE consolidated reply per user message; avoid calling the message tool multiple times in one turn`
@@ -716,7 +726,7 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 	} else {
 		parts = append(parts, "You are Sypher, a coding-centric AI assistant.")
 	}
-	parts = append(parts, platformCtx, hardRules)
+	parts = append(parts, toolsSummary, platformCtx, hardRules)
 	return strings.Join(parts, "\n\n")
 }
 

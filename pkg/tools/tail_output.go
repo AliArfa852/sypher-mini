@@ -61,10 +61,16 @@ func (t *TailOutputTool) Execute(ctx context.Context, req Request) Response {
 	if err != nil {
 		abs = path
 	}
+	abs = filepath.Clean(abs)
 
 	if t.restrictToWorkspace {
-		wsAbs, _ := filepath.Abs(t.workspace)
-		if !strings.HasPrefix(abs, wsAbs) {
+		wsAbs, err := filepath.Abs(t.workspace)
+		if err != nil {
+			wsAbs = t.workspace
+		}
+		wsAbs = filepath.Clean(wsAbs)
+		rel, err := filepath.Rel(wsAbs, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return ErrorResponse(req.ToolCallID,
 				"Path outside workspace",
 				"File path is outside the allowed workspace.",
@@ -72,7 +78,7 @@ func (t *TailOutputTool) Execute(ctx context.Context, req Request) Response {
 		}
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(abs)
 	if err != nil {
 		return ErrorResponse(req.ToolCallID,
 			fmt.Sprintf("Failed to open file: %v", err),

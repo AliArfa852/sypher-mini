@@ -202,10 +202,17 @@ type WhatsAppConfig struct {
 // ProvidersConfig holds LLM provider configs.
 type ProvidersConfig struct {
 	RoutingStrategy string                 `json:"routing_strategy"`
+	LLMRateLimit    LLMRateLimitConfig     `json:"llm_rate_limit,omitempty"`
 	Cerebras        ProviderConfig         `json:"cerebras"`
 	OpenAI          ProviderConfig         `json:"openai"`
 	Anthropic       ProviderConfig         `json:"anthropic"`
 	Gemini          ProviderConfig         `json:"gemini"`
+}
+
+// LLMRateLimitConfig limits API calls per time window (e.g. 2 per 15 sec).
+type LLMRateLimitConfig struct {
+	MaxPerWindow int `json:"max_per_window"` // max calls allowed in window (default 2)
+	WindowSec    int `json:"window_sec"`     // window duration in seconds (default 15)
 }
 
 // ProviderConfig holds a single provider's config.

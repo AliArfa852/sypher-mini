@@ -23,6 +23,16 @@ func LoadBootstrapFiles(workspace string, agentID string) string {
 	if base == "" {
 		return ""
 	}
+	// Sanitize agentID to prevent path traversal (reject .., /, \, and control chars)
+	for _, c := range agentID {
+		if c == '.' || c == '/' || c == '\\' || c < 32 {
+			agentID = "main"
+			break
+		}
+	}
+	if agentID == "" || agentID == "." || agentID == ".." {
+		agentID = "main"
+	}
 	// Per-agent workspace: ~/.sypher-mini/workspace-{id}/
 	agentWorkspace := filepath.Join(filepath.Dir(base), "workspace-"+agentID)
 	if _, err := os.Stat(agentWorkspace); os.IsNotExist(err) {
