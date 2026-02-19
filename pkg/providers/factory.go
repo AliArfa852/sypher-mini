@@ -77,7 +77,7 @@ func listProviders(cfg *config.Config) []ProviderEntry {
 
 	if key := getAPIKey("GEMINI_API_KEY", cfg.Providers.Gemini.APIKey); key != "" {
 		entries = append(entries, ProviderEntry{
-			Provider: gemini.New(key, "gemini-1.5-flash"),
+			Provider: gemini.New(key, "gemini-2.5-flash-lite"),
 			Name:     "gemini",
 		})
 	}

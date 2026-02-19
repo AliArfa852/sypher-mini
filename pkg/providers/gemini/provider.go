@@ -25,7 +25,7 @@ type Provider struct {
 // New creates a Gemini provider.
 func New(apiKey, defaultModel string) *Provider {
 	if defaultModel == "" {
-		defaultModel = "gemini-1.5-flash"
+		defaultModel = "gemini-2.5-flash-lite"
 	}
 	return &Provider{
 		apiKey:       apiKey,

@@ -3,7 +3,7 @@
     "defaults": {
       "workspace": "~/.sypher-mini/workspace",
       "restrict_to_workspace": true,
-      "model": "cerebras/llama-3.1-70b",
+      "model": "gemini/gemini-2.5-flash-lite",
       "max_tool_iterations": 20
     },
     "list": [
@@ -18,7 +18,7 @@
       {
         "id": "gemini-cli",
         "command": "gemini",
-        "args": ["--model", "gemini-2.0"],
+        "args": ["--model", "gemini-2.5-flash-lite"],
         "authorized_terminals": ["default"],
         "allowed_commands": ["*"]
       }
@@ -33,7 +33,7 @@
       "enabled": false,
       "bridge_url": "ws://localhost:3001",
       "baileys_url": "http://localhost:3002",
-      "use_baileys": false,
+      "use_baileys": true,
       "allow_from": [],
       "operators": [],
       "admins": []

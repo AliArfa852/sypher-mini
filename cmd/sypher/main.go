@@ -342,7 +342,9 @@ func gatewayCmd(args []string, safeMode bool) {
 	if cfg.Channels.WhatsApp.Enabled {
 		health.Set("whatsapp", "ok")
 
-		if cfg.Channels.WhatsApp.UseBaileys {
+		// Prefer Baileys (QR) when use_baileys is true or no bridge configured
+		useBaileys := cfg.Channels.WhatsApp.UseBaileys || cfg.Channels.WhatsApp.BridgeURL == ""
+		if useBaileys {
 			// Baileys extension: inbound via /inbound, outbound via HTTP to extension
 			baileysURL := cfg.Channels.WhatsApp.BaileysURL
 			if baileysURL == "" {

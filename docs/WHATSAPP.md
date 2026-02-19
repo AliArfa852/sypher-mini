@@ -1,6 +1,6 @@
 # WhatsApp Setup Guide
 
-Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extension.
+Connect Sypher-mini to WhatsApp via QR code (Baileys, default) or a WebSocket bridge.
 
 ---
 
@@ -21,8 +21,8 @@ Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extensio
 
 | Method | Pros | Cons |
 |--------|------|------|
+| **Baileys (default)** | Self-contained, no browser, QR pairing | Node.js 20+ required |
 | **Bridge** | Use existing bridge (e.g. whatsapp-web.js) | Requires separate bridge process |
-| **Baileys** | Self-contained, no browser | Node.js required, QR pairing |
 
 ---
 
@@ -147,7 +147,7 @@ npm run build && npm start
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `use_baileys` | `false` | Use Baileys extension instead of WebSocket bridge |
+| `use_baileys` | `true` | Use Baileys (QR) extension; set `false` and `bridge_url` for WebSocket bridge |
 | `baileys_url` | `http://localhost:3002` | Extension HTTP endpoint |
 
 ### Extension API

@@ -390,6 +390,8 @@ See [docs/WHATSAPP.md](WHATSAPP.md) for details.
 
 ### Option 2: WebSocket bridge
 
+To use a WebSocket bridge instead of QR (Baileys), set `use_baileys: false` and `bridge_url`:
+
 1. Run a WhatsApp bridge (e.g. [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) or similar) that exposes a WebSocket.
 2. Edit config:
 
@@ -398,6 +400,7 @@ See [docs/WHATSAPP.md](WHATSAPP.md) for details.
   "channels": {
     "whatsapp": {
       "enabled": true,
+      "use_baileys": false,
       "bridge_url": "ws://localhost:3001",
       "allow_from": ["+1234567890"]
     }
