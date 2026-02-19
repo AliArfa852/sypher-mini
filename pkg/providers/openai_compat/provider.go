@@ -56,6 +56,9 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []t
 	}
 
 	model = p.normalizeModel(model)
+	if model == "" || !p.isValidModel(model) {
+		model = p.defaultModel
+	}
 
 	requestBody := map[string]interface{}{
 		"model":    model,
@@ -111,6 +114,18 @@ func (p *Provider) normalizeModel(model string) string {
 		return model[idx+1:]
 	}
 	return model
+}
+
+// isValidModel returns true if the model is valid for this provider.
+func (p *Provider) isValidModel(model string) bool {
+	switch strings.ToLower(p.name) {
+	case "cerebras":
+		return strings.HasPrefix(model, "llama-")
+	case "openai":
+		return strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1-")
+	default:
+		return true
+	}
 }
 
 // GetDefaultModel returns the default model.

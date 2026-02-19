@@ -494,6 +494,11 @@ Via WhatsApp or `sypher agent -m "..."`:
 - Copy `.env.example` to `.env`, add your key, then run `sypher agent` again
 - Verify env var: `echo $GEMINI_API_KEY` (Linux/macOS) or `echo $env:GEMINI_API_KEY` (PowerShell)
 
+### "models/llama-3.1-70b is not found" (404 from Gemini)
+
+- Config had `cerebras/llama-3.1-70b` but only Gemini was configured. Fixed: providers now use their default model when the config model does not match.
+- Optional: set `GEMINI_MODEL=gemini-2.5-flash-lite` to override `agents.defaults.model` when using Gemini
+
 ### "Command blocked by safety guard"
 
 - The exec tool blocks dangerous commands (e.g. `rm -rf`, `sudo`)

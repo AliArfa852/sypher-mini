@@ -48,6 +48,9 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []t
 	}
 
 	model = normalizeModel(model)
+	if model == "" || !strings.HasPrefix(model, "claude-") {
+		model = p.defaultModel
+	}
 	maxTokens := 2048
 	if mt, ok := asInt(options["max_tokens"]); ok && mt > 0 {
 		maxTokens = mt

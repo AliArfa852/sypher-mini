@@ -22,7 +22,7 @@ type Provider struct {
 	defaultModel string
 }
 
-// New creates a Gemini provider.
+// New creates a Gemini provider. Default model is gemini-2.5-flash-lite unless changed.
 func New(apiKey, defaultModel string) *Provider {
 	if defaultModel == "" {
 		defaultModel = "gemini-2.5-flash-lite"
@@ -71,6 +71,11 @@ func toGeminiTools(tools []types.ToolDefinition) []map[string]interface{} {
 	}
 }
 
+// isGeminiModel returns true if the model is a Gemini model (e.g. gemini-2.5-flash-lite).
+func isGeminiModel(model string) bool {
+	return strings.HasPrefix(model, "gemini-") || model == "gemini"
+}
+
 // Chat sends a request to Gemini generateContent API with function calling support.
 func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []types.ToolDefinition, model string, options map[string]interface{}) (*types.LLMResponse, error) {
 	if p.apiKey == "" {
@@ -78,6 +83,9 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, tools []t
 	}
 
 	model = normalizeModel(model)
+	if model == "" || !isGeminiModel(model) {
+		model = p.defaultModel
+	}
 	maxTokens := 2048
 	if mt, ok := asInt(options["max_tokens"]); ok && mt > 0 {
 		maxTokens = mt

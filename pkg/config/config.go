@@ -294,6 +294,12 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("SYPHER_GATEWAY_BIND"); v != "" {
 		cfg.Gateway.Bind = v
 	}
+	// When GEMINI_API_KEY is set, allow GEMINI_MODEL to override agents.defaults.model
+	if os.Getenv("GEMINI_API_KEY") != "" || cfg.Providers.Gemini.APIKey != "" {
+		if v := os.Getenv("GEMINI_MODEL"); v != "" {
+			cfg.Agents.Defaults.Model = "gemini/" + v
+		}
+	}
 }
 
 // DefaultConfig returns a default configuration.

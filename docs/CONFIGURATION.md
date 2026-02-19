@@ -154,7 +154,7 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 | `cerebras.api_key` | string | — | Cerebras API key |
 | `openai.api_key` | string | — | OpenAI API key |
 | `anthropic.api_key` | string | — | Anthropic API key |
-| `gemini.api_key` | string | — | Gemini API key |
+| `gemini.api_key` | string | — | Gemini API key (default model: `gemini-2.5-flash-lite` unless overridden by `GEMINI_MODEL` or `agents.defaults.model`) |
 
 ### task
 
