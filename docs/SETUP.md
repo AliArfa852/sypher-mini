@@ -491,8 +491,8 @@ Via WhatsApp or `sypher agent -m "..."`:
 ### "no LLM provider configured"
 
 - Set at least one API key: `GEMINI_API_KEY`, `CEREBRAS_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`
-- Copy `.env.example` to `.env`, add your key, then run `sypher agent` again
-- Verify env var: `echo $GEMINI_API_KEY` (Linux/macOS) or `echo $env:GEMINI_API_KEY` (PowerShell)
+- Copy `.env.example` to `.env` in the project dir or `~/.sypher-mini/.env`, add your key, then run `sypher agent` again (the CLI loads `.env` from cwd and `~/.sypher-mini`)
+- Or export the key before running: `export GEMINI_API_KEY=xxx` (Linux/macOS) or `$env:GEMINI_API_KEY="xxx"` (PowerShell)
 
 ### "models/llama-3.1-70b is not found" (404 from Gemini)
 

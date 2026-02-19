@@ -329,7 +329,7 @@ func DefaultConfig() *Config {
 		AuthorizedTerminals: []string{"default"},
 		Channels: ChannelsConfig{
 			WhatsApp: WhatsAppConfig{
-				Enabled:    false,
+				Enabled:    true,
 				BridgeURL:  "ws://localhost:3001",
 				BaileysURL: "http://localhost:3002",
 				UseBaileys: true, // QR connection is default when WhatsApp enabled

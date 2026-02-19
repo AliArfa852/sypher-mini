@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/sypherexx/sypher-mini/pkg/agent"
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/channels"
@@ -27,6 +28,14 @@ import (
 )
 
 var version = "dev"
+
+func init() {
+	// Load .env from cwd or ~/.sypher-mini so API keys (GEMINI_API_KEY, etc.) are available
+	_ = godotenv.Load(".env")
+	if home, err := os.UserHomeDir(); err == nil {
+		_ = godotenv.Load(filepath.Join(home, ".sypher-mini", ".env"))
+	}
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -697,7 +706,10 @@ func whatsappCmd(args []string) {
 
 func onboardCmd() {
 	path := config.GetConfigPath()
-	cfg := config.DefaultConfig()
+	cfg, err := config.Load(path)
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
 
 	dir := config.ExpandPath(cfg.Agents.Defaults.Workspace)
 	if err := os.MkdirAll(dir, 0755); err != nil {
