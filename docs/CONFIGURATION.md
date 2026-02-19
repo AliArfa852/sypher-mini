@@ -151,6 +151,7 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `routing_strategy` | string | `cheap_first` | Provider order |
+| `paid_tier` | bool | `false` | Set `true` for paid API plans; disables LLM rate limits |
 | `cerebras.api_key` | string | — | Cerebras API key |
 | `openai.api_key` | string | — | OpenAI API key |
 | `anthropic.api_key` | string | — | Anthropic API key |
@@ -239,6 +240,7 @@ sypher config set task.timeout_sec 600
 | Variable | Overrides |
 |----------|-----------|
 | `SYPHER_MINI_MODE` | `deployment.mode` |
+| `SYPHER_LLM_PAID_TIER` | `providers.paid_tier` (true/1/yes) |
 | `CEREBRAS_API_KEY` | `providers.cerebras.api_key` |
 | `OPENAI_API_KEY` | `providers.openai.api_key` |
 | `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |

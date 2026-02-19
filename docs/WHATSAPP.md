@@ -197,6 +197,8 @@ For future WhatsApp command tiers:
 | `1`–`6`, `0`, `back` | Navigate menus (only when already in a menu session) |
 | `sypher` + request | Routes to the agent with full tools (e.g. "sypher create a hello world script") |
 | `/config`, `/cli`, etc. | Slash commands (see below) |
+| `42`, `sudo`, `joke`, `coffee`, `roll dice`, `hello world` | Easter eggs — try them. |
+| `7` (from menu) | Roll the dice — 1d6, 2d6, 1d20 |
 | Anything else | Agent with full tools |
 
 All features are available via the menu or by talking to the agent. Type `menu` or `/help` to see options.
@@ -249,6 +251,13 @@ Manage persistent CLI terminals from WhatsApp:
 
 - Delete `~/.sypher-mini/whatsapp-auth/` and re-pair
 - Check WhatsApp account is not logged in elsewhere
+
+### Baileys: "Bad MAC" / "Failed to decrypt message with any known session"
+
+- Session keys are out of sync with the sender's device.
+- **Fix:** Delete auth and re-pair: `rm -rf ~/.sypher-mini/whatsapp-auth/` (or `%USERPROFILE%\.sypher-mini\whatsapp-auth` on Windows), then restart and scan a new QR code.
+- Ensure only one login per account (unlink other WhatsApp Web/Baileys instances).
+- If errors persist, check that you're not in groups/broadcasts with many senders; some sessions may be stale and will recover automatically ("Closing open session in favor of incoming prekey bundle").
 
 ### Messages not received
 

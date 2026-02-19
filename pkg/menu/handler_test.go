@@ -104,3 +104,29 @@ func TestHandler_NonWhatsApp(t *testing.T) {
 		t.Error("menu on non-WhatsApp channel should not be handled")
 	}
 }
+
+func TestHandler_EasterEggs(t *testing.T) {
+	h := NewHandler(config.DefaultConfig(), nil, "")
+	ctx := context.Background()
+
+	tests := []struct {
+		content  string
+		wantSub  string
+	}{
+		{"42", "42"},
+		{"sudo", "maximum enthusiasm"},
+		{"joke", "arrays"},
+		{"hello world", "Hello, World"},
+		{"roll dice", "Quick roll"},
+	}
+	for _, tt := range tests {
+		msg := bus.InboundMessage{Channel: "whatsapp", ChatID: "+123", SenderID: "+123", Content: tt.content}
+		handled, resp := h.Handle(ctx, msg)
+		if !handled {
+			t.Errorf("easter egg %q should be handled", tt.content)
+		}
+		if !strings.Contains(resp, tt.wantSub) {
+			t.Errorf("easter egg %q: response missing %q: %s", tt.content, tt.wantSub, resp)
+		}
+	}
+}

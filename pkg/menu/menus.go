@@ -2,23 +2,61 @@ package menu
 
 import (
 	"encoding/json"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sync"
 )
 
+// Taglines shown randomly when displaying the main menu.
+var mainMenuTaglines = []string{
+	"*Your mission, should you choose to accept it…*",
+	"*Beep boop. Ready to serve.*",
+	"*What can this humble bot do for you today?*",
+	"*Ctrl+Alt+Awesome, at your service.*",
+	"*The future is now. So is this menu.*",
+	"*Pick a number, any number (1–7).*",
+	"*Like a Swiss Army knife, but for your projects.*",
+	"*No cape required. Just tap a number.*",
+}
+
+// Footer variations for the main menu prompt.
+var mainMenuFooters = []string{
+	"_Type a number or say 'sypher' + your request._",
+	"_Tap a number, or just tell me what you need._",
+	"_Number keys work. So does 'sypher [your request]'._",
+	"_1–7 for menu, or 'sypher deploy my app' for magic._",
+}
+
+// RandomTagline returns a random main-menu tagline.
+func RandomTagline() string {
+	if len(mainMenuTaglines) == 0 {
+		return ""
+	}
+	return mainMenuTaglines[rand.Intn(len(mainMenuTaglines))] + "\n\n"
+}
+
+// RandomFooter returns a random footer for the main menu.
+func RandomFooter() string {
+	if len(mainMenuFooters) == 0 {
+		return "_Type a number or say 'sypher' + your request._"
+	}
+	return mainMenuFooters[rand.Intn(len(mainMenuFooters))]
+}
+
 // DefaultMenus returns the built-in menu definitions.
 func DefaultMenus() MenusConfig {
 	return MenusConfig{
 		"main": {
-			Title: "Sypher-mini Control Panel",
+			Title: "🎛️ Sypher-mini Control Panel",
 			Items: []MenuItem{
-				{ID: "1", Label: "Projects", Submenu: "projects"},
-				{ID: "2", Label: "Tasks", Submenu: "tasks"},
-				{ID: "3", Label: "Logs & Monitoring", Submenu: "logs"},
-				{ID: "4", Label: "CLI Sessions", Submenu: "cli"},
-				{ID: "5", Label: "Server & Config", Submenu: "server"},
-				{ID: "6", Label: "Help / Examples", Submenu: "help"},
+				{ID: "1", Label: "Projects — list, build, pull", Submenu: "projects"},
+				{ID: "2", Label: "Tasks — create, run, authorize", Submenu: "tasks"},
+				{ID: "3", Label: "Logs & Monitoring — tail, stream, health", Submenu: "logs"},
+				{ID: "4", Label: "CLI Sessions — your terminal away from terminal", Submenu: "cli"},
+				{ID: "5", Label: "Server & Config — status, keys, connect", Submenu: "server"},
+				{ID: "6", Label: "Help / Examples — commands & slash shortcuts", Submenu: "help"},
+				{ID: "7", Label: "🎲 Roll the dice — 1d6, 2d6, 1d20", Submenu: "dice"},
 			},
 		},
 		"projects": {
@@ -76,6 +114,15 @@ func DefaultMenus() MenusConfig {
 			Items: []MenuItem{
 				{ID: "1", Label: "Command formats", Action: "help"},
 				{ID: "2", Label: "Slash commands", Action: "help_slash"},
+				{ID: "0", Label: "Back to main menu", Submenu: "main"},
+			},
+		},
+		"dice": {
+			Title: "🎲 Roll the Dice",
+			Items: []MenuItem{
+				{ID: "1", Label: "Roll 1d6 (classic)", Action: "roll_1d6"},
+				{ID: "2", Label: "Roll 2d6 (craps style)", Action: "roll_2d6"},
+				{ID: "3", Label: "Roll 1d20 (D&D style)", Action: "roll_1d20"},
 				{ID: "0", Label: "Back to main menu", Submenu: "main"},
 			},
 		},
@@ -151,6 +198,8 @@ func RenderMenu(cfg MenusConfig, menuID string) string {
 			emoji = "5️⃣ "
 		case "6":
 			emoji = "6️⃣ "
+		case "7":
+			emoji = "7️⃣ "
 		case "0":
 			emoji = "0️⃣ "
 		default:

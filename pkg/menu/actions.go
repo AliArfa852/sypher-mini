@@ -3,6 +3,7 @@ package menu
 import (
 	"context"
 	"fmt"
+	"math/rand"
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/config"
@@ -70,6 +71,13 @@ Replace X with: cerebras, openai, anthropic, or gemini.`, nil
 			return runner.RunConfigStatus(ctx, msg)
 		}
 		return "Use /status for status. Use /agents for agents list (operator).", nil
+	case "roll_1d6":
+		return fmt.Sprintf("🎲 *1d6:* You rolled *%d*", rand.Intn(6)+1), nil
+	case "roll_2d6":
+		a, b := rand.Intn(6)+1, rand.Intn(6)+1
+		return fmt.Sprintf("🎲 *2d6:* You rolled *%d* + *%d* = *%d*", a, b, a+b), nil
+	case "roll_1d20":
+		return fmt.Sprintf("🎲 *1d20:* You rolled *%d*", rand.Intn(20)+1), nil
 	default:
 		return preDesignedAction(actionID, cfg), nil
 	}

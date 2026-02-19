@@ -82,10 +82,12 @@ func NewFallbackProvider(cfg *config.Config) *FallbackProvider {
 		retryMax = 2
 	}
 	rl := (*llmRateLimiter)(nil)
-	if cfg.Providers.LLMRateLimit.MaxPerWindow > 0 || cfg.Providers.LLMRateLimit.WindowSec > 0 {
-		rl = newLLMRateLimiter(cfg.Providers.LLMRateLimit.MaxPerWindow, cfg.Providers.LLMRateLimit.WindowSec)
-	} else {
-		rl = newLLMRateLimiter(2, 15) // default: 2 per 15 sec
+	if !cfg.Providers.PaidTier {
+		if cfg.Providers.LLMRateLimit.MaxPerWindow > 0 || cfg.Providers.LLMRateLimit.WindowSec > 0 {
+			rl = newLLMRateLimiter(cfg.Providers.LLMRateLimit.MaxPerWindow, cfg.Providers.LLMRateLimit.WindowSec)
+		} else {
+			rl = newLLMRateLimiter(2, 15) // default: 2 per 15 sec (free tier)
+		}
 	}
 	return &FallbackProvider{
 		entries:   NewProviderWithFallbacks(cfg),

@@ -203,6 +203,7 @@ type WhatsAppConfig struct {
 // ProvidersConfig holds LLM provider configs.
 type ProvidersConfig struct {
 	RoutingStrategy string                 `json:"routing_strategy"`
+	PaidTier        bool                   `json:"paid_tier"`        // If true, disables LLM rate limits (for paid API plans)
 	LLMRateLimit    LLMRateLimitConfig     `json:"llm_rate_limit,omitempty"`
 	Cerebras        ProviderConfig         `json:"cerebras"`
 	OpenAI          ProviderConfig         `json:"openai"`
@@ -299,6 +300,9 @@ func applyEnvOverrides(cfg *Config) {
 		if v := os.Getenv("GEMINI_MODEL"); v != "" {
 			cfg.Agents.Defaults.Model = "gemini/" + v
 		}
+	}
+	if v := os.Getenv("SYPHER_LLM_PAID_TIER"); v != "" {
+		cfg.Providers.PaidTier = strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes")
 	}
 }
 

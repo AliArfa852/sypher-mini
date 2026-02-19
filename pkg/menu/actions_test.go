@@ -45,4 +45,19 @@ func TestRenderMenu(t *testing.T) {
 	if !strings.Contains(resp, "Control Panel") || !strings.Contains(resp, "Projects") {
 		t.Errorf("RenderMenu main: %s", resp)
 	}
+	if !strings.Contains(resp, "Roll the dice") {
+		t.Errorf("RenderMenu main missing dice: %s", resp)
+	}
+}
+
+func TestExecuteAction_RollDice(t *testing.T) {
+	for _, action := range []string{"roll_1d6", "roll_2d6", "roll_1d20"} {
+		resp, err := ExecuteAction(context.Background(), action, config.DefaultConfig(), nil, bus.InboundMessage{})
+		if err != nil {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if !strings.Contains(resp, "🎲") || !strings.Contains(resp, "rolled") {
+			t.Errorf("%s response: %s", action, resp)
+		}
+	}
 }

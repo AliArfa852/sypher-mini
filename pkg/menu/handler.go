@@ -2,11 +2,37 @@ package menu
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"strings"
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/config"
 )
+
+// easterEgg returns a fun response for magic phrases, or "" if none matched.
+func easterEgg(lower string) string {
+	switch lower {
+	case "42":
+		return "🤖 *42* — The answer to life, the universe, and everything. (Also a valid menu choice if we had 42 options. We don't. Try 1–6.)"
+	case "sudo":
+		return "🔐 *sudo* — Nice try. I'm already running with maximum enthusiasm. Try `menu` for the real controls."
+	case "coffee", "tea":
+		return "☕ I'd love some too. While we wait, type `menu` to see what I can actually do for you."
+	case "joke", "tell me a joke", "make me laugh":
+		return "😄 Why did the developer quit? Because they didn't get arrays. (Type `menu` for the good stuff.)"
+	case "hello world":
+		return "🌍 Hello, World! Now type `menu` and let's build something real."
+	case "beep", "boop":
+		return "🤖 Beep boop. I'm fully operational. Type `menu` when you're ready."
+	case "help me":
+		return "🆘 I've got you! Type `menu` or `/help` for the full control panel."
+	case "dice", "roll dice", "roll the dice":
+		return fmt.Sprintf("🎲 *Quick roll:* You got *%d* (1d6)", rand.Intn(6)+1)
+	default:
+		return ""
+	}
+}
 
 // Handler handles WhatsApp menu workflow messages.
 type Handler struct {
@@ -38,11 +64,15 @@ func (h *Handler) Handle(ctx context.Context, msg bus.InboundMessage) (handled b
 	lower := strings.ToLower(content)
 	key := Key(msg.Channel, msg.ChatID)
 
+	// 0. Easter eggs — fun responses for magic phrases
+	if egg := easterEgg(lower); egg != "" {
+		return true, egg
+	}
+
 	// 1. Trigger words: menu or /help only (avoid false activation)
 	if lower == "menu" || lower == "/help" {
 		h.store.ResetToMain(key)
-		response = RenderMenu(h.menus, "main")
-		response = "👋 " + response + "\n\n_Type a number or say 'sypher' + your request._"
+		response = RandomTagline() + "👋 " + RenderMenu(h.menus, "main") + "\n\n" + RandomFooter()
 		return true, response
 	}
 

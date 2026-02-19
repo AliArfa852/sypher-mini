@@ -1,13 +1,14 @@
 {
   "main": {
-    "title": "Sypher-mini Control Panel",
+    "title": "🎛️ Sypher-mini Control Panel",
     "items": [
-      { "id": "1", "label": "Projects", "submenu": "projects" },
-      { "id": "2", "label": "Tasks", "submenu": "tasks" },
-      { "id": "3", "label": "Logs & Monitoring", "submenu": "logs" },
-      { "id": "4", "label": "CLI Sessions", "submenu": "cli" },
-      { "id": "5", "label": "Server & Config", "submenu": "server" },
-      { "id": "6", "label": "Help / Examples", "submenu": "help" }
+      { "id": "1", "label": "Projects — list, build, pull", "submenu": "projects" },
+      { "id": "2", "label": "Tasks — create, run, authorize", "submenu": "tasks" },
+      { "id": "3", "label": "Logs & Monitoring — tail, stream, health", "submenu": "logs" },
+      { "id": "4", "label": "CLI Sessions — your terminal away from terminal", "submenu": "cli" },
+      { "id": "5", "label": "Server & Config — status, keys, connect", "submenu": "server" },
+      { "id": "6", "label": "Help / Examples — commands & slash shortcuts", "submenu": "help" },
+      { "id": "7", "label": "🎲 Roll the dice — 1d6, 2d6, 1d20", "submenu": "dice" }
     ]
   },
   "projects": {
@@ -65,6 +66,15 @@
     "items": [
       { "id": "1", "label": "Command formats", "action": "help" },
       { "id": "2", "label": "Slash commands", "action": "help_slash" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  },
+  "dice": {
+    "title": "🎲 Roll the Dice",
+    "items": [
+      { "id": "1", "label": "Roll 1d6 (classic)", "action": "roll_1d6" },
+      { "id": "2", "label": "Roll 2d6 (craps style)", "action": "roll_2d6" },
+      { "id": "3", "label": "Roll 1d20 (D&D style)", "action": "roll_1d20" },
       { "id": "0", "label": "Back to main menu", "submenu": "main" }
     ]
   }
