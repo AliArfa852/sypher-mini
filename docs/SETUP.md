@@ -300,6 +300,8 @@ To delegate code generation to the Gemini CLI:
 
 The agent can then use the `invoke_cli_agent` tool to run Gemini CLI with a task.
 
+**Tool-capable models:** Use a model that supports tool calls (e.g. `llama-3.1-70b`, `gpt-4o`, `gemini-2.0`). Some models return text only and will not invoke tools.
+
 ---
 
 ## First Run

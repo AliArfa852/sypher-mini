@@ -18,6 +18,7 @@ type Config struct {
 	Providers           ProvidersConfig  `json:"providers"`
 	Task                TaskConfig       `json:"task"`
 	Deployment          DeploymentConfig `json:"deployment"`
+	Gateway             GatewayConfig    `json:"gateway,omitempty"`
 	Tools               ToolsConfig      `json:"tools,omitempty"`
 	Audit               AuditConfig      `json:"audit,omitempty"`
 	Policies            PoliciesConfig   `json:"policies,omitempty"`
@@ -232,6 +233,12 @@ type DeploymentConfig struct {
 	Mode string `json:"mode"`
 }
 
+// GatewayConfig holds gateway HTTP server config.
+type GatewayConfig struct {
+	Bind          string `json:"bind,omitempty"`           // e.g. "127.0.0.1:18790" (default) or "0.0.0.0:18790"
+	InboundSecret string `json:"inbound_secret,omitempty"` // If set, require X-Sypher-Inbound-Secret header on /inbound and /cancel
+}
+
 // GetConfigPath returns the path to the config file.
 func GetConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -280,6 +287,12 @@ func applyEnvOverrides(cfg *Config) {
 	// TODO: use caarlos0/env for full env override support
 	if v := os.Getenv("SYPHER_MINI_MODE"); v != "" {
 		cfg.Deployment.Mode = v
+	}
+	if v := os.Getenv("SYPHER_INBOUND_SECRET"); v != "" {
+		cfg.Gateway.InboundSecret = v
+	}
+	if v := os.Getenv("SYPHER_GATEWAY_BIND"); v != "" {
+		cfg.Gateway.Bind = v
 	}
 }
 

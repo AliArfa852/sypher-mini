@@ -1,0 +1,71 @@
+{
+  "main": {
+    "title": "Sypher-mini Control Panel",
+    "items": [
+      { "id": "1", "label": "Projects", "submenu": "projects" },
+      { "id": "2", "label": "Tasks", "submenu": "tasks" },
+      { "id": "3", "label": "Logs & Monitoring", "submenu": "logs" },
+      { "id": "4", "label": "CLI Sessions", "submenu": "cli" },
+      { "id": "5", "label": "Server & Config", "submenu": "server" },
+      { "id": "6", "label": "Help / Examples", "submenu": "help" }
+    ]
+  },
+  "projects": {
+    "title": "Projects",
+    "items": [
+      { "id": "1", "label": "List active projects", "action": "projects_list" },
+      { "id": "2", "label": "Open project workspace", "action": "projects_open" },
+      { "id": "3", "label": "Run build/test", "action": "projects_build" },
+      { "id": "4", "label": "Pull latest repo changes", "action": "projects_pull" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  },
+  "tasks": {
+    "title": "Task Manager",
+    "items": [
+      { "id": "1", "label": "Create new task", "action": "tasks_create" },
+      { "id": "2", "label": "View running tasks", "action": "tasks_list" },
+      { "id": "3", "label": "Authorize pending task", "action": "tasks_authorize" },
+      { "id": "4", "label": "Cancel task", "action": "tasks_cancel" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  },
+  "logs": {
+    "title": "Logs & Monitoring",
+    "items": [
+      { "id": "1", "label": "Tail latest logs", "action": "logs_tail" },
+      { "id": "2", "label": "Stream command output", "action": "logs_stream" },
+      { "id": "3", "label": "Show HTTP monitor status", "action": "monitors_status" },
+      { "id": "4", "label": "Check system health", "action": "status" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  },
+  "cli": {
+    "title": "CLI Sessions",
+    "items": [
+      { "id": "1", "label": "List sessions", "action": "cli_list" },
+      { "id": "2", "label": "Open new session", "action": "cli_new" },
+      { "id": "3", "label": "Send command to session", "action": "cli_run" },
+      { "id": "4", "label": "Tail session output", "action": "cli_tail" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  },
+  "server": {
+    "title": "Server & Config",
+    "items": [
+      { "id": "1", "label": "Status", "action": "status" },
+      { "id": "2", "label": "Config summary", "action": "config_status" },
+      { "id": "3", "label": "Add API key", "action": "add_api" },
+      { "id": "4", "label": "Connect Gemini CLI", "action": "connect_gemini" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  },
+  "help": {
+    "title": "Help / Examples",
+    "items": [
+      { "id": "1", "label": "Command formats", "action": "help" },
+      { "id": "2", "label": "Slash commands", "action": "help_slash" },
+      { "id": "0", "label": "Back to main menu", "submenu": "main" }
+    ]
+  }
+}

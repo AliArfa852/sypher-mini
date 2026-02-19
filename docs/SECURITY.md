@@ -12,14 +12,20 @@ Sypher-mini executes shell commands and connects to external services. This docu
 
 ## Vulnerability and Weak Point Reference
 
-### Critical Vulnerabilities (Mitigated)
+### Critical Vulnerabilities (Mitigated or Fixed)
 
 | ID | Severity | Description | Mitigation |
 |----|----------|-------------|------------|
-| V1 | High | Deny patterns can be disabled (Picoclaw) | Picoclaw now requires `PICOCLAW_DANGER_DISABLE_DENY=1` to honor config disable |
-| V2 | High | Command path traversal | Command path validation added; paths in command string checked against workspace |
-| V3 | Medium | Web fetch prompt injection | Prefix guard in place; consider stronger fencing for untrusted URLs |
-| V4 | Medium | Windows path HasPrefix flaw | Workspace root rejection added; `filepath.Rel` used for path comparison |
+| V1 | High | allow_from not enforced for chat | Enforced in agent loop and /inbound; messages from non-allowed senders are dropped |
+| V2 | High | Path traversal in audit/replay CLI | task_id restricted to alphanumeric/hyphen/underscore; safeJoin validates resolved path |
+| V3 | High | Deny patterns can be disabled (Picoclaw) | Picoclaw requires `PICOCLAW_DANGER_DISABLE_DENY=1` to honor config disable |
+| V4 | High | Command path traversal | Command path validation; paths in command string checked against workspace |
+| V5 | Medium | No auth on /inbound, /cancel | Optional `gateway.inbound_secret`; require `X-Sypher-Inbound-Secret` header |
+| V6 | Medium | Unbounded msg.Content / request body | Max 256KB body, 64KB content; MaxBytesReader on /inbound and /cancel |
+| V7 | Medium | Web fetch prompt injection | Prefix guard in place; avoid fetching untrusted URLs |
+| V8 | Medium | Windows path HasPrefix flaw | Workspace root rejection; `filepath.Rel` used for path comparison |
+| V9 | Low | cancelCmd JSON injection in task_id | Use json.Marshal instead of fmt.Sprintf |
+| V10 | Low | /metrics exposes internal state | Document: do not expose /metrics publicly |
 
 ### Weak Points (Feature Gaps)
 
@@ -102,7 +108,20 @@ Every exec command (including `cli run`) is logged to `~/.sypher-mini/audit/{tas
 [task_id] [tool_call_id] timestamp | exec | cmd="..." cwd="..." exit=0 | output...
 ```
 
-### 5. Rate limits
+### 5. allow_from enforcement
+
+When `channels.whatsapp.allow_from` is set, only listed senders can interact. Messages from others are dropped (no response). Enforced at /inbound and in the agent loop for all WhatsApp entry points (Baileys, bridge).
+
+### 6. Path validation for audit/replay
+
+`sypher audit show <task_id>` and `sypher replay <task_id>` validate task_id (alphanumeric, hyphen, underscore only) and ensure the resolved path stays under the audit/replay directory. Prevents path traversal (e.g. `../../../etc/passwd`).
+
+### 7. Input limits
+
+- **HTTP request body:** Max 256KB on /inbound and /cancel (DoS mitigation)
+- **Message content:** Max 64KB; longer content is truncated
+
+### 8. Rate limits
 
 Configure per-agent, per-tool rate limits:
 
@@ -162,9 +181,28 @@ chmod 600 ~/.sypher-mini/config.json
 
 ## WhatsApp
 
-- Set `allow_from` to restrict who can interact
-- Use `operators` and `admins` for privileged commands (when implemented)
+- Set `allow_from` to restrict who can interact (enforced for chat and commands)
+- Use `operators` and `admins` for privileged slash commands
 - Keep `~/.sypher-mini/whatsapp-auth/` private (Baileys session)
+
+---
+
+## Deployment
+
+**Bind address:** Default `127.0.0.1:18790` (loopback only). For remote access, set `gateway.bind` (e.g. `0.0.0.0:18790`) and use a reverse proxy with auth.
+
+**Optional inbound secret:** Set `gateway.inbound_secret` or `SYPHER_INBOUND_SECRET` to require `X-Sypher-Inbound-Secret` header on `/inbound` and `/cancel`. Bridge/Baileys must send this header.
+
+```json
+{
+  "gateway": {
+    "bind": "127.0.0.1:18790",
+    "inbound_secret": "your-secret-here"
+  }
+}
+```
+
+**Metrics:** Do not expose `/metrics` publicly; it reveals internal counters.
 
 ---
 
@@ -202,3 +240,5 @@ Only in controlled environments:
 - [ ] Audit logging enabled
 - [ ] Workspace is not a filesystem root
 - [ ] Deny patterns enabled (do not disable without env var)
+- [ ] Gateway bound to loopback (`127.0.0.1`) or behind reverse proxy with auth
+- [ ] `gateway.inbound_secret` set when exposing /inbound to untrusted networks

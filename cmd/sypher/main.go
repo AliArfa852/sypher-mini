@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -125,6 +126,44 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
+// safeJoin ensures the resolved path stays under baseDir (prevents path traversal).
+func safeJoin(baseDir, suffix string) (string, error) {
+	path := filepath.Join(baseDir, suffix)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(baseAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path outside base directory")
+	}
+	return path, nil
+}
+
+// taskIDRegex restricts task_id to alphanumeric, hyphen, underscore (prevents path traversal).
+var taskIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func isValidTaskID(id string) bool {
+	return id != "" && len(id) <= 128 && taskIDRegex.MatchString(id)
+}
+
+// isAllowedSender returns true if from is allowed (empty allow_from = allow all).
+func isAllowedSender(from string, allowFrom []string) bool {
+	if len(allowFrom) == 0 {
+		return true
+	}
+	for _, a := range allowFrom {
+		if a == from {
+			return true
+		}
+	}
+	return false
+}
+
 func agentCmd(args []string, safeMode bool) {
 	cfg := loadConfig()
 
@@ -221,6 +260,13 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if secret := cfg.Gateway.InboundSecret; secret != "" {
+			if r.Header.Get("X-Sypher-Inbound-Secret") != secret {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 		var payload struct {
 			TaskID string `json:"task_id"`
 		}
@@ -237,6 +283,14 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if secret := cfg.Gateway.InboundSecret; secret != "" {
+			if r.Header.Get("X-Sypher-Inbound-Secret") != secret {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		// Limit request body to 256KB (DoS mitigation)
+		r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 		var payload struct {
 			Type    string `json:"type"`
 			From    string `json:"from"`
@@ -247,6 +301,17 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
+		// Enforce allow_from: drop messages from non-allowed senders (silent)
+		if !isAllowedSender(payload.From, cfg.Channels.WhatsApp.AllowFrom) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
+		// Limit content length to 64KB
+		content := payload.Content
+		if len(content) > 64*1024 {
+			content = content[:64*1024] + "\n\n... (truncated)"
+		}
 		chatID := payload.ChatID
 		if chatID == "" {
 			chatID = payload.From
@@ -254,13 +319,17 @@ func gatewayCmd(args []string, safeMode bool) {
 		msgBus.PublishInbound(bus.InboundMessage{
 			Channel:  "whatsapp",
 			ChatID:   chatID,
-			Content:  payload.Content,
+			Content:  content,
 			SenderID: payload.From,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
-	srv := &http.Server{Addr: ":18790", Handler: mux}
+	addr := cfg.Gateway.Bind
+	if addr == "" {
+		addr = "127.0.0.1:18790"
+	}
+	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		_ = srv.ListenAndServe()
 	}()
@@ -324,7 +393,7 @@ func gatewayCmd(args []string, safeMode bool) {
 		health.Set("whatsapp", "disabled")
 		fmt.Println("Gateway running. WhatsApp disabled (set channels.whatsapp.enabled)")
 	}
-	fmt.Println("Health: http://localhost:18790/health")
+	fmt.Printf("Health: http://%s/health\n", addr)
 
 	<-sigCh
 	cancel()
@@ -473,12 +542,20 @@ func auditCmd(args []string) {
 		return
 	}
 	taskID := args[1]
+	if !isValidTaskID(taskID) {
+		fmt.Fprintf(os.Stderr, "Invalid task_id: must be alphanumeric, hyphen, underscore only (max 128 chars)\n")
+		os.Exit(1)
+	}
 	cfg := loadConfig()
 	auditDir := config.ExpandPath(cfg.Audit.Dir)
 	if auditDir == "" {
 		auditDir = config.ExpandPath("~/.sypher-mini/audit")
 	}
-	path := filepath.Join(auditDir, taskID+".log")
+	path, err := safeJoin(auditDir, taskID+".log")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", err)
+		os.Exit(1)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Audit log not found: %v\n", err)
@@ -493,12 +570,20 @@ func replayCmd(args []string) {
 		return
 	}
 	taskID := args[0]
+	if !isValidTaskID(taskID) {
+		fmt.Fprintf(os.Stderr, "Invalid task_id: must be alphanumeric, hyphen, underscore only (max 128 chars)\n")
+		os.Exit(1)
+	}
 	cfg := loadConfig()
 	replayDir := config.ExpandPath("~/.sypher-mini/replay")
 	if cfg.Replay.Dir != "" {
 		replayDir = config.ExpandPath(cfg.Replay.Dir)
 	}
-	path := filepath.Join(replayDir, taskID+".json")
+	path, err := safeJoin(replayDir, taskID+".json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", err)
+		os.Exit(1)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Replay file not found: %v (replay persistence may be disabled)\n", err)
@@ -529,8 +614,12 @@ func cancelCmd(args []string) {
 	if v := os.Getenv("SYPHER_GATEWAY_URL"); v != "" {
 		url = v + "/cancel"
 	}
-	body := fmt.Sprintf(`{"task_id":"%s"}`, taskID)
-	req, err := http.NewRequest("POST", url, strings.NewReader(body))
+	bodyBytes, err := json.Marshal(map[string]string{"task_id": taskID})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Request error: %v\n", err)
+		os.Exit(1)
+	}
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Request error: %v\n", err)
 		os.Exit(1)

@@ -20,6 +20,7 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/task"
 	"github.com/sypherexx/sypher-mini/pkg/tools"
 	"github.com/sypherexx/sypher-mini/pkg/policy"
+	"github.com/sypherexx/sypher-mini/pkg/menu"
 	"github.com/sypherexx/sypher-mini/pkg/platform"
 	"github.com/sypherexx/sypher-mini/pkg/replay"
 )
@@ -47,6 +48,7 @@ type Loop struct {
 	idempotency   *idempotency.Cache
 	safeMode      bool
 	running       atomic.Bool
+	menuHandler   *menu.Handler
 }
 
 // LoopOptions configures the agent loop.
@@ -97,7 +99,7 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		idemCache = idempotency.New(time.Duration(ttl) * time.Second)
 	}
 
-	return &Loop{
+	l := &Loop{
 		cfg:         cfg,
 		msgBus:      msgBus,
 		eventBus:    eventBus,
@@ -119,6 +121,8 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		policyEval:  policyEval,
 		safeMode:    opts.SafeMode,
 	}
+	l.menuHandler = menu.NewHandler(cfg, l, "")
+	return l
 }
 
 // Run starts the agent loop. It processes inbound messages until ctx is cancelled.
@@ -265,6 +269,30 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 
 // processMessage handles a single inbound message.
 func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	// WhatsApp: enforce allow_from (silent drop if sender not allowed)
+	if msg.Channel == "whatsapp" {
+		allowFrom := l.cfg.Channels.WhatsApp.AllowFrom
+		if len(allowFrom) > 0 {
+			allowed := false
+			for _, a := range allowFrom {
+				if a == msg.SenderID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return "", nil // Silent drop; no response
+			}
+		}
+	}
+
+	// WhatsApp: menu workflow (menu, /help, numeric-in-menu) before slash commands
+	if msg.Channel == "whatsapp" && l.menuHandler != nil {
+		if handled, response := l.menuHandler.Handle(ctx, msg); handled {
+			return response, nil
+		}
+	}
+
 	// WhatsApp command parsing (config get, agents list, etc.)
 	if msg.Channel == "whatsapp" {
 		if isCmd, cmd, args, tier := intent.ParseWhatsAppCommand(msg.Content, msg.SenderID, &l.cfg.Channels); isCmd && cmd != "" {
@@ -664,6 +692,42 @@ func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.Inbo
 	}
 }
 
+// RunCliList implements menu.ActionRunner.
+func (l *Loop) RunCliList(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return l.handleCliCommand(ctx, []string{"list"}, msg)
+}
+
+// RunCliNew implements menu.ActionRunner.
+func (l *Loop) RunCliNew(ctx context.Context, tag string, msg bus.InboundMessage) (string, error) {
+	args := []string{"new"}
+	if tag != "" {
+		args = append(args, "-m", tag)
+	}
+	return l.handleCliCommand(ctx, args, msg)
+}
+
+// RunStatus implements menu.ActionRunner.
+func (l *Loop) RunStatus(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return l.handleWhatsAppCommand(ctx, "status", nil, intent.TierUser, msg)
+}
+
+// RunConfigStatus implements menu.ActionRunner.
+func (l *Loop) RunConfigStatus(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	status, _ := l.handleWhatsAppCommand(ctx, "status", nil, intent.TierUser, msg)
+	model := l.cfg.Agents.Defaults.Model
+	if model == "" {
+		model = "default"
+	}
+	var agents string
+	for i, a := range l.cfg.Agents.List {
+		agents += fmt.Sprintf("%d: %s\n", i+1, a.ID)
+	}
+	if agents == "" {
+		agents = "No agents"
+	}
+	return fmt.Sprintf("*Config*\nModel: %s\n\n%s\n\n*Agents*\n%s", model, status, agents), nil
+}
+
 // truncateMessages keeps system + recent messages when total tokens exceed threshold.
 // Rough estimate: 4 chars = 1 token.
 func truncateMessages(messages []providers.Message, thresholdTokens int) []providers.Message {
@@ -715,6 +779,7 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 
 	hardRules := `## Hard Rules (non-overridable)
 - ALWAYS use tools for actions; never pretend to execute or output pseudocode
+- When the user asks to run commands, create files, or use Gemini CLI, you MUST use the appropriate tool (exec, invoke_cli_agent, etc.). Do not respond with instructions only.
 - Call tools by their exact names (exec, kill, web_fetch, message, tail_output, stream_command, invoke_cli_agent)
 - Be helpful and accurate
 - Use memory file for persistent info

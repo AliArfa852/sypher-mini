@@ -10,9 +10,10 @@ Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extensio
 2. [Option 1: WebSocket Bridge](#option-1-websocket-bridge)
 3. [Option 2: Baileys Extension](#option-2-baileys-extension)
 4. [Configuration](#configuration)
-5. [CLI Session Commands](#cli-session-commands)
-6. [Security](#security)
-7. [Troubleshooting](#troubleshooting)
+5. [Menu and Routing](#menu-and-routing)
+6. [CLI Session Commands](#cli-session-commands)
+7. [Security](#security)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -188,17 +189,29 @@ For future WhatsApp command tiers:
 
 ---
 
+## Menu and Routing
+
+| You send | What happens |
+|----------|--------------|
+| `menu` or `/help` | Shows the main menu (Projects, Tasks, Logs, CLI, Server, Help) |
+| `1`–`6`, `0`, `back` | Navigate menus (only when already in a menu session) |
+| `sypher` + request | Routes to the agent with full tools (e.g. "sypher create a hello world script") |
+| `/config`, `/cli`, etc. | Slash commands (see below) |
+| Anything else | Agent with full tools |
+
+All features are available via the menu or by talking to the agent. Type `menu` or `/help` to see options.
+
 ## CLI Session Commands
 
 Manage persistent CLI terminals from WhatsApp:
 
 | Command | Description |
 |---------|-------------|
-| `cli list` | List active CLI sessions (ID, tag, last activity) |
-| `cli new -m 'tag'` | Create new terminal with tag |
-| `cli <N>` | Show last 10 lines of terminal N |
-| `cli <N> --tail 50` | Show last 50 lines (max 100) |
-| `cli run <N> <command>` | Run command in terminal N |
+| `/cli list` or `cli list` | List active CLI sessions (ID, tag, last activity) |
+| `/cli new -m 'tag'` | Create new terminal with tag |
+| `/cli <N>` | Show last 10 lines of terminal N |
+| `/cli <N> --tail 50` | Show last 50 lines (max 100) |
+| `/cli run <N> <command>` | Run command in terminal N |
 
 **Examples:** `cli new -m 'starting dev'`, `cli 1 --tail 100`, `cli run 1 npm run dev`
 

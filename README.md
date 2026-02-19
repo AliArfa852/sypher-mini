@@ -233,11 +233,3 @@ See [MODULES.md](MODULES.md) for a complete list of implemented modules and thei
 ## License
 
 MIT
-
-nvm use 22
-which node   
-0/bin/node
-node -v      
-
-cd ~/sypher-mini
-sypher gateway
