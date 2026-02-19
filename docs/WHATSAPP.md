@@ -10,8 +10,9 @@ Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extensio
 2. [Option 1: WebSocket Bridge](#option-1-websocket-bridge)
 3. [Option 2: Baileys Extension](#option-2-baileys-extension)
 4. [Configuration](#configuration)
-5. [Security](#security)
-6. [Troubleshooting](#troubleshooting)
+5. [CLI Session Commands](#cli-session-commands)
+6. [Security](#security)
+7. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -184,6 +185,22 @@ For future WhatsApp command tiers:
 "operators": ["+1234567890"],
 "admins": ["+1234567890"]
 ```
+
+---
+
+## CLI Session Commands
+
+Manage persistent CLI terminals from WhatsApp:
+
+| Command | Description |
+|---------|-------------|
+| `cli list` | List active CLI sessions (ID, tag, last activity) |
+| `cli new -m 'tag'` | Create new terminal with tag |
+| `cli <N>` | Show last 10 lines of terminal N |
+| `cli <N> --tail 50` | Show last 50 lines (max 100) |
+| `cli run <N> <command>` | Run command in terminal N |
+
+**Examples:** `cli new -m 'starting dev'`, `cli 1 --tail 100`, `cli run 1 npm run dev`
 
 ---
 

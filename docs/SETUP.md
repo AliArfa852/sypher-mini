@@ -124,6 +124,26 @@ This creates:
 
 Open the config file in your editor. The minimal required change is adding an API key.
 
+### Workspace override (allow_dirs)
+
+To run commands in directories outside the default workspace (e.g. `E:\demo`), add them to `tools.exec.allow_dirs`:
+
+```json
+{
+  "tools": {
+    "exec": {
+      "allow_dirs": ["E:\\demo", "D:\\projects"]
+    }
+  }
+}
+```
+
+**Windows:** Use double backslashes (`\\`) in JSON. Paths support `~` for home directory.
+
+**Example (E:\\demo setup):** To let the agent create repos and run commands in `E:\demo`, add `"E:\\demo"` to `allow_dirs`. The agent can then `mkdir`, `git init`, and run tools in that directory.
+
+**Git discovery:** The agent can find git repos via exec, e.g. `find . -name .git -type d` (Unix) or `dir /s /b .git` (Windows), or `git rev-parse --show-toplevel` when already inside a repo.
+
 ---
 
 ## API Keys
@@ -172,6 +192,37 @@ $env:CEREBRAS_API_KEY = "your-key"
 ### Routing strategy
 
 By default, Sypher-mini uses `cheap_first` routing: it tries cheaper providers first (e.g. Cerebras) before falling back to more expensive ones (OpenAI, Anthropic).
+
+### Gemini CLI (optional)
+
+To delegate code generation to the Gemini CLI:
+
+1. Install the [Gemini CLI](https://ai.google.dev/gemini-api/docs/cli) and ensure `gemini` is in your PATH.
+2. Add an agent with `command` and `args` in `agents.list`:
+
+```json
+{
+  "agents": {
+    "list": [
+      { "id": "gemini-cli", "command": "gemini", "args": ["--model", "gemini-2.0"] }
+    ]
+  }
+}
+```
+
+3. Add `gemini` to `tools.live_monitoring.allowed_commands` to stream long outputs:
+
+```json
+{
+  "tools": {
+    "live_monitoring": {
+      "allowed_commands": ["npm run", "go run", "tail -f", "gemini"]
+    }
+  }
+}
+```
+
+The agent can then use the `invoke_cli_agent` tool to run Gemini CLI with a task.
 
 ---
 
@@ -277,6 +328,70 @@ See [docs/WHATSAPP.md](WHATSAPP.md) for details.
 ```
 
 3. Start gateway: `sypher gateway`
+
+---
+
+## E:\demo Test Scenario Walkthrough
+
+This walkthrough demonstrates creating a repo in `E:\demo`, generating a Python file with animation via Gemini CLI, and committing to git.
+
+### Prerequisites
+
+- Workspace or `tools.exec.allow_dirs` includes `E:\demo`
+- [Gemini CLI](https://ai.google.dev/gemini-api/docs/cli) installed and in PATH
+- Git installed
+- If push needed: enable `tools.exec.allow_git_push` in config
+
+### Step 1: Configure allow_dirs
+
+Add `E:\demo` to `tools.exec.allow_dirs` in `~/.sypher-mini/config.json`:
+
+```json
+{
+  "tools": {
+    "exec": {
+      "allow_dirs": ["E:\\demo"]
+    }
+  }
+}
+```
+
+### Step 2: Configure Gemini CLI (optional)
+
+Add a Gemini CLI agent and allow streaming:
+
+```json
+{
+  "agents": {
+    "list": [
+      { "id": "gemini-cli", "command": "gemini", "args": ["--model", "gemini-2.0"] }
+    ]
+  },
+  "tools": {
+    "live_monitoring": {
+      "allowed_commands": ["npm run", "go run", "tail -f", "gemini"]
+    }
+  }
+}
+```
+
+### Step 3: Run the scenario
+
+Via WhatsApp or `sypher agent -m "..."`:
+
+1. **Create repo:** "Create a repo called test sypher in E:\demo"
+   - Agent runs: `mkdir E:\demo\test sypher`, `cd E:\demo\test sypher`, `git init`
+2. **Generate code:** "Create hello.py with animation using Gemini"
+   - Agent uses `invoke_cli_agent` with task "Create hello.py with animation"
+3. **Commit:** "Add and commit the changes"
+   - Agent runs: `git add .`, `git commit -m "Add hello.py"`
+4. **Push (optional):** Enable `allow_git_push` if you need to push to a remote.
+
+### Troubleshooting
+
+- **"working_dir outside workspace"** — Ensure `E:\demo` is in `allow_dirs`
+- **"gemini: command not found"** — Install Gemini CLI and add to PATH
+- **"git push blocked"** — Set `tools.exec.allow_git_push: true` for trusted agents
 
 ---
 

@@ -1,12 +1,46 @@
 # Sypher-mini Security Guide
 
-Security model, best practices, and safe mode.
+Security model, best practices, vulnerabilities, and safe mode.
 
 ---
 
 ## Overview
 
-Sypher-mini executes shell commands and connects to external services. This document describes built-in protections and recommended practices.
+Sypher-mini executes shell commands and connects to external services. This document describes built-in protections, known vulnerabilities and mitigations, and recommended practices.
+
+---
+
+## Vulnerability and Weak Point Reference
+
+### Critical Vulnerabilities (Mitigated)
+
+| ID | Severity | Description | Mitigation |
+|----|----------|-------------|------------|
+| V1 | High | Deny patterns can be disabled (Picoclaw) | Picoclaw now requires `PICOCLAW_DANGER_DISABLE_DENY=1` to honor config disable |
+| V2 | High | Command path traversal | Command path validation added; paths in command string checked against workspace |
+| V3 | Medium | Web fetch prompt injection | Prefix guard in place; consider stronger fencing for untrusted URLs |
+| V4 | Medium | Windows path HasPrefix flaw | Workspace root rejection added; `filepath.Rel` used for path comparison |
+
+### Weak Points (Feature Gaps)
+
+| ID | Description |
+|----|-------------|
+| W1 | No MCP tools – limited extensibility |
+| W2 | Gemini CLI not wired – cannot delegate to Gemini CLI |
+| W3 | Git push blocked – no opt-in for trusted agents |
+| W4 | Sypher-mini lacks file tools – relies on exec for file ops |
+| W5 | No git discovery tool |
+| W6 | Stream_command allowlist – gemini not in default list |
+| W7 | Workspace restriction – E:\demo requires allow_dirs |
+
+### Exploit Scenarios and Mitigations
+
+| Exploit | Vector | Mitigation |
+|---------|--------|------------|
+| E1 | Config sets `EnableDenyPatterns: false` | Env var required (Picoclaw) |
+| E2 | Malicious URL in web_fetch injects instructions | Prefix guard; avoid fetching untrusted URLs |
+| E3 | Command `cat ../../../etc/passwd` with valid working_dir | Path extraction and validation in exec |
+| E4 | Workspace set to `E:\` | Root path rejection; workspace cannot be filesystem root |
 
 ---
 
@@ -19,6 +53,8 @@ Sypher-mini executes shell commands and connects to external services. This docu
 - Exec commands run with working directory inside workspace
 - File access (read/write) limited to workspace
 - Prevents access to system paths outside `~/.sypher-mini/workspace`
+- **Hardened:** Workspace cannot be a filesystem root (e.g. `E:\`, `/`); `filepath.Rel` used for path comparison
+- **Command path validation:** Paths inside the command string (e.g. `cat /etc/passwd`) are validated; paths outside workspace are blocked
 
 ### 2. Deny patterns (exec tool)
 
@@ -60,7 +96,7 @@ You cannot kill arbitrary system processes.
 
 ### 4. Audit logging
 
-Every exec command is logged to `~/.sypher-mini/audit/{task_id}.log`:
+Every exec command (including `cli run`) is logged to `~/.sypher-mini/audit/{task_id}.log`:
 
 ```
 [task_id] [tool_call_id] timestamp | exec | cmd="..." cwd="..." exit=0 | output...
@@ -147,3 +183,22 @@ Only in controlled environments:
 ```
 
 ⚠️ **Warning:** This allows the agent to access any path and run commands anywhere. Use with extreme caution.
+
+---
+
+## Config security notes
+
+- **Deny patterns:** Never disable via config without understanding the risk. Picoclaw requires `PICOCLAW_DANGER_DISABLE_DENY=1` to honor disable.
+- **Workspace:** Do not set workspace to a drive root (`E:\`, `C:\`) or `/`; these are rejected.
+- **allow_dirs:** When added, only list directories you explicitly trust for `working_dir` override.
+
+---
+
+## Safe deployment checklist
+
+- [ ] API keys in environment variables, not config
+- [ ] `restrict_to_workspace: true` (default)
+- [ ] `allow_from` set for WhatsApp
+- [ ] Audit logging enabled
+- [ ] Workspace is not a filesystem root
+- [ ] Deny patterns enabled (do not disable without env var)

@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/sypherexx/sypher-mini/pkg/audit"
 	"github.com/sypherexx/sypher-mini/pkg/bus"
+	"github.com/sypherexx/sypher-mini/pkg/clisession"
 	"github.com/sypherexx/sypher-mini/pkg/config"
 	"github.com/sypherexx/sypher-mini/pkg/idempotency"
 	"github.com/sypherexx/sypher-mini/pkg/intent"
@@ -28,13 +30,15 @@ type Loop struct {
 	eventBus    *bus.Bus
 	taskMgr     *task.Manager
 	provider    providers.LLMProvider
-	execTool       *tools.ExecTool
-	killTool       *tools.KillTool
-	webFetch       *tools.WebFetchTool
-	messageTool    *tools.MessageTool
-	tailOutput     *tools.TailOutputTool
-	streamCommand  *tools.StreamCommandTool
-	metrics        *observability.Metrics
+	execTool         *tools.ExecTool
+	killTool         *tools.KillTool
+	webFetch         *tools.WebFetchTool
+	messageTool      *tools.MessageTool
+	tailOutput       *tools.TailOutputTool
+	streamCommand    *tools.StreamCommandTool
+	invokeCliAgent   *tools.InvokeCliAgentTool
+	cliManager      *clisession.Manager
+	metrics         *observability.Metrics
 	auditLogger *audit.Logger
 	procTracker *process.Tracker
 	policyEval  *policy.Evaluator
@@ -78,6 +82,8 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	messageTool := tools.NewMessageTool(msgBus, opts.SafeMode)
 	tailOutput := tools.NewTailOutputTool(cfg, opts.SafeMode)
 	streamCommand := tools.NewStreamCommandTool(cfg, msgBus, messageTool, opts.SafeMode)
+	invokeCliAgent := tools.NewInvokeCliAgentTool(cfg, opts.SafeMode)
+	cliManager := clisession.NewManager()
 	replayWriter := replay.NewWriter(cfg)
 	metrics := observability.NewMetrics()
 
@@ -96,13 +102,15 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		eventBus:    eventBus,
 		taskMgr:     taskMgr,
 		provider:    provider,
-		execTool:    execTool,
-		killTool:    killTool,
-		webFetch:      webFetch,
-		messageTool:   messageTool,
-		tailOutput:    tailOutput,
-		streamCommand: streamCommand,
-		replayWriter:  replayWriter,
+		execTool:       execTool,
+		killTool:       killTool,
+		webFetch:       webFetch,
+		messageTool:    messageTool,
+		tailOutput:     tailOutput,
+		streamCommand:  streamCommand,
+		invokeCliAgent: invokeCliAgent,
+		cliManager:     cliManager,
+		replayWriter:   replayWriter,
 		idempotency:   idemCache,
 		metrics:       metrics,
 		auditLogger: auditLogger,
@@ -224,7 +232,7 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
 				Name:        "stream_command",
-				Description: "Run a command and stream output to the user. Only commands in live_monitoring.allowed_commands are permitted.",
+				Description: "Run a command and stream output to the user. Only commands in live_monitoring.allowed_commands are permitted (e.g. npm run, go run, gemini).",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -232,6 +240,22 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 						"working_dir": map[string]interface{}{"type": "string", "description": "Working directory (optional)"},
 					},
 					"required": []interface{}{"command"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
+				Name:        "invoke_cli_agent",
+				Description: "Invoke a configured CLI agent (e.g. Gemini CLI) with a task. Use for code generation when an agent with command/args is configured.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"task":        map[string]interface{}{"type": "string", "description": "Task/prompt for the CLI agent"},
+						"agent_id":    map[string]interface{}{"type": "string", "description": "Agent ID to use (optional; uses first agent with command/args if omitted)"},
+						"working_dir": map[string]interface{}{"type": "string", "description": "Working directory (optional)"},
+					},
+					"required": []interface{}{"task"},
 				},
 			},
 		},
@@ -392,6 +416,8 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 					toolResp = l.tailOutput.Execute(ctx, req)
 				case "stream_command":
 					toolResp = l.streamCommand.Execute(ctx, req)
+				case "invoke_cli_agent":
+					toolResp = l.invokeCliAgent.Execute(ctx, req)
 				default:
 					toolResp = tools.ErrorResponse(tc.ID, "Unknown tool: "+tc.Name, "Unknown tool.", tools.CodePermissionDenied, false)
 				}
@@ -541,8 +567,100 @@ func (l *Loop) handleWhatsAppCommand(ctx context.Context, cmd string, args []str
 		return "Usage: audit <task_id>", nil
 	case "status":
 		return fmt.Sprintf("Agents: %d, Timeout: %ds", len(l.cfg.Agents.List), l.cfg.Task.TimeoutSec), nil
+	case "cli":
+		return l.handleCliCommand(ctx, args, msg)
 	}
 	return "", nil
+}
+
+// handleCliCommand handles sypher cli list|new|N [--tail N].
+func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.InboundMessage) (string, error) {
+	if len(args) == 0 {
+		return "Usage: cli list | cli new -m 'tag' | cli <N> [--tail N]", nil
+	}
+	switch args[0] {
+	case "run":
+		if len(args) < 3 {
+			return "Usage: cli run <session_id> <command>", nil
+		}
+		var sid int
+		if _, err := fmt.Sscanf(args[1], "%d", &sid); err != nil {
+			return "Invalid session ID", nil
+		}
+		cmdStr := strings.Join(args[2:], " ")
+		s := l.cliManager.Get(sid)
+		if s == nil {
+			return fmt.Sprintf("Session %d not found", sid), nil
+		}
+		// Run via exec and append output to session
+		req := tools.Request{
+			ToolCallID: "cli-run",
+			TaskID:    "cli-" + args[1],
+			AgentID:   "main",
+			Name:      "exec",
+			Args:      map[string]interface{}{"command": cmdStr},
+		}
+		resp := l.execTool.Execute(ctx, req)
+		output := resp.ForLLM
+		if resp.IsError {
+			output = "Error: " + output
+		}
+		s.Append(output)
+		return output, nil
+	case "list":
+		sessions := l.cliManager.List()
+		if len(sessions) == 0 {
+			return "No active CLI sessions. Use 'cli new -m \"tag\"' to create one.", nil
+		}
+		var out string
+		for _, s := range sessions {
+			ago := "just now"
+			if d := time.Since(s.LastActivity); d > time.Minute {
+				ago = fmt.Sprintf("%.0fm ago", d.Minutes())
+			}
+			out += fmt.Sprintf("%d: %s (active %s)\n", s.ID, s.Tag, ago)
+		}
+		return out, nil
+	case "new":
+		tag := ""
+		for i := 1; i < len(args); i++ {
+			if args[i] == "-m" && i+1 < len(args) {
+				tag = strings.Join(args[i+1:], " ")
+				break
+			}
+		}
+		if tag == "" {
+			tag = "unnamed"
+		}
+		s := l.cliManager.New(tag)
+		return fmt.Sprintf("Created CLI session %d: %s", s.ID, tag), nil
+	default:
+		// args[0] is session number, parse --tail N
+		var id int
+		if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil {
+			return "Usage: cli <session_id> [--tail N]", nil
+		}
+		tail := clisession.DefaultTailLines
+		for i := 1; i < len(args)-1; i++ {
+			if args[i] == "--tail" && i+1 < len(args) {
+				if n, err := fmt.Sscanf(args[i+1], "%d", &tail); err == nil && n == 1 {
+					if tail > clisession.MaxTailLines {
+						tail = clisession.MaxTailLines
+					}
+				}
+				break
+			}
+		}
+		s := l.cliManager.Get(id)
+		if s == nil {
+			return fmt.Sprintf("Session %d not found. Use 'cli list' to see active sessions.", id), nil
+		}
+		out := s.Tail(tail)
+		if out == "" {
+			return fmt.Sprintf("Session %d (%s): no output yet", id, s.Tag), nil
+		}
+		return fmt.Sprintf("Session %d (%s) last %d lines:\n%s", id, s.Tag, tail, out), nil
+	}
 }
 
 // truncateMessages keeps system + recent messages when total tokens exceed threshold.

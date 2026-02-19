@@ -36,6 +36,7 @@ Sypher-mini combines **PicoClaw-style** efficiency with **OpenClaw-style** flexi
 | **Health endpoint** | `GET /health` when gateway runs |
 | **Metrics endpoint** | `GET /metrics` for tool/task counters |
 | **Live streaming** | `tail_output`, `stream_command` tools |
+| **CLI sessions** | Tagged terminals via WhatsApp: `cli list`, `cli new -m 'tag'`, `cli <N> [--tail N]` |
 | **Extension discovery** | `sypher extensions` lists extensions |
 | **Safe mode** | `--safe` disables exec, LLM, kill |
 

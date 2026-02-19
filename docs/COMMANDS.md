@@ -62,6 +62,15 @@ go clean -cache                   # Clean Go cache
 | `sypher commands list` | List per-command configs |
 | `sypher version` | Show version |
 
+### WhatsApp CLI session commands (when connected via WhatsApp)
+
+| Command | Description |
+|---------|-------------|
+| `cli list` | List active CLI sessions |
+| `cli new -m 'tag'` | Create terminal with tag |
+| `cli <N> [--tail N]` | Show last N lines of terminal (default 10, max 100) |
+| `cli run <N> <cmd>` | Run command in terminal N |
+
 ---
 
 ## Command Details

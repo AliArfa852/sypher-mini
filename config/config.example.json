@@ -56,7 +56,7 @@
       "timeout_sec": 60
     },
     "live_monitoring": {
-      "allowed_commands": ["npm run", "go run", "tail -f"]
+      "allowed_commands": ["npm run", "go run", "tail -f","gemini"]
     }
   },
   "audit": {

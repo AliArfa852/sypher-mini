@@ -91,6 +91,8 @@ type LiveMonitoringConfig struct {
 type ExecToolConfig struct {
 	CustomDenyPatterns []string `json:"custom_deny_patterns,omitempty"`
 	TimeoutSec         int      `json:"timeout_sec"`
+	AllowGitPush       bool     `json:"allow_git_push"`
+	AllowDirs          []string `json:"allow_dirs,omitempty"`
 }
 
 // AuditConfig holds audit logger config.

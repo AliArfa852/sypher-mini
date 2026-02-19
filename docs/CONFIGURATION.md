@@ -66,10 +66,12 @@ Complete reference for `~/.sypher-mini/config.json`.
   "tools": {
     "exec": {
       "custom_deny_patterns": [],
-      "timeout_sec": 60
+      "timeout_sec": 60,
+      "allow_git_push": false,
+      "allow_dirs": []
     },
     "live_monitoring": {
-      "allowed_commands": ["npm run", "go run", "tail -f"]
+      "allowed_commands": ["npm run", "go run", "tail -f", "gemini"]
     }
   },
   "audit": {
@@ -167,6 +169,8 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 |-------|------|---------|-------------|
 | `custom_deny_patterns` | []string | `[]` | Extra regex patterns to block |
 | `timeout_sec` | int | `60` | Exec command timeout |
+| `allow_git_push` | bool | `false` | Allow `git push` and `git force` (use only in trusted environments) |
+| `allow_dirs` | []string | `[]` | Additional directories allowed for `working_dir` outside workspace (e.g. `E:\demo`) |
 
 ### audit
 

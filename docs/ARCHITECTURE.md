@@ -101,6 +101,13 @@ pending → authorized → executing ⇄ monitoring → completed | failed | tim
 |------|-------------|
 | `exec` | Run shell command; deny patterns, workspace check |
 | `kill` | Kill PID (only if owned by current task) |
+| `invoke_cli_agent` | Run configured CLI agent (e.g. Gemini) with task |
+
+### 8b. CLI session manager (`pkg/clisession`)
+
+- **SessionStore** — Active terminals with ID, tag, output buffer
+- **Per-session buffer** — Last N lines (default 10, max 100 via `--tail`)
+- **WhatsApp commands** — `cli list`, `cli new -m 'tag'`, `cli <N> [--tail N]`, `cli run <N> <cmd>`
 
 ### 9. Audit (`pkg/audit`)
 
