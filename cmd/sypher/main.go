@@ -624,11 +624,11 @@ func onboardCmd() {
 
 	// Create bootstrap template files if missing
 	bootstrapFiles := map[string]string{
-		"AGENTS.md":    "# Agent behavior guide\n\nEdit this file to define the agent's role, instructions, and how it should behave.\n",
-		"AGENT.md":     "# Agent role (alias for AGENTS.md)\n\nSame content as AGENTS.md. Edit to define the agent's role and instructions.\n",
-		"SOUL.md":      "# Agent soul\n\nPersonality, tone, values, and boundaries. Loaded every session.\n",
+		"AGENTS.md":    "# Agent behavior guide\n\nYou are Sypher. Edit this file to define your role, instructions, and how you should behave.\n",
+		"AGENT.md":     "# Agent role (alias for AGENTS.md)\n\nYou are Sypher. Same content as AGENTS.md. Edit to define your role and instructions.\n",
+		"SOUL.md":      "# Agent soul\n\nYou are Sypher. Personality, tone, values, and boundaries. Loaded every session.\n",
 		"USER.md":      "# User context\n\nWho the user is and how to address them. Loaded every session.\n",
-		"IDENTITY.md":  "# Agent identity\n\nThe agent's name, vibe, and identity. Optional override.\n",
+		"IDENTITY.md":  "# Agent identity\n\nYour name is Sypher. Optional override for vibe and identity.\n",
 		"HEARTBEAT.md": "# Periodic tasks\n\nOptional checklist for heartbeat runs (when implemented). Keep short.\n",
 		"TOOLS.md":     "# Tool descriptions\n\nNotes about local tools and conventions. Guidance only; does not control tool availability.\n",
 	}

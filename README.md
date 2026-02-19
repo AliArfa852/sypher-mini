@@ -1,6 +1,8 @@
 # Sypher-mini
 
-**Coding-centric AI agent pipeline** — A lightweight Go core with optional Node extensions, supporting multiple LLM providers, WhatsApp connectivity, per-task audit logging, and server monitoring.
+**For coders.** A custom solution to implement or get started on that brainfart idea — all through WhatsApp. Work and monitor your projects even when you're not near a laptop or device.
+
+A lightweight Go core with optional Node extensions, supporting multiple LLM providers, WhatsApp connectivity, per-task audit logging, and server monitoring.
 
 <p>
   <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
@@ -11,11 +13,11 @@
 
 ## Overview
 
-Sypher-mini combines **PicoClaw-style** efficiency with **OpenClaw-style** flexibility:
+Sypher-mini combines **PicoClaw-style** efficiency with **OpenClaw-style** flexibility. Run commands, check builds, tail logs, and iterate on ideas from your phone — no laptop required.
 
 - **Go core** — Fast, single binary, minimal footprint
 - **Multi-provider** — Cerebras, OpenAI, Anthropic, Gemini with cheap-first routing
-- **WhatsApp** — Bridge (WebSocket) or Baileys extension
+- **WhatsApp** — Bridge (WebSocket) or Baileys extension — your coding assistant in your pocket
 - **Audit & security** — Per-task command logging, process tracking, deny patterns
 - **Extensible** — Node.js extensions (e.g. WhatsApp Baileys)
 

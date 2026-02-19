@@ -592,7 +592,7 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 	if bootstrap != "" {
 		return bootstrap + "\n\n" + hardRules
 	}
-	return "You are Sypher-mini, a coding-centric AI assistant.\n\n" + hardRules
+	return "You are Sypher, a coding-centric AI assistant.\n\n" + hardRules
 }
 
 // Stop stops the agent loop.
