@@ -15,6 +15,10 @@ type Manifest struct {
 	SypherMiniVersion  string   `json:"sypher_mini_version"`
 	Capabilities       []string `json:"capabilities"`
 	Entry              string   `json:"entry"`
+	Runtime            string   `json:"runtime"`   // e.g. "node"
+	NodeMin            string   `json:"node_min"`  // e.g. "20"
+	Setup              string   `json:"setup"`     // e.g. "scripts/setup"
+	Start              string   `json:"start"`     // e.g. "scripts/start"
 }
 
 // DiscoveredExtension holds a discovered extension with its manifest.

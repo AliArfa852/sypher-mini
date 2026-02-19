@@ -31,7 +31,7 @@ Complete step-by-step setup for Sypher-mini on Windows, macOS, and Linux.
 
 | Requirement | Purpose |
 |-------------|---------|
-| **Node.js** | WhatsApp Baileys extension |
+| **Node.js** | 20+ for WhatsApp Baileys extension |
 | **npm** | Installing extension dependencies |
 
 ### Verify installation

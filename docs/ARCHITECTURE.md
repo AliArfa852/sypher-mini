@@ -187,8 +187,28 @@ Extensions live in `extensions/{name}/` with `sypher.extension.json`:
   "version": "1.0.0",
   "sypher_mini_version": ">=0.1.0",
   "capabilities": ["channel"],
-  "entry": "dist/index.js"
+  "entry": "dist/index.js",
+  "node_min_version": "18",
+  "setup_script": "npm run setup",
+  "start_script": "npm run start"
 }
 ```
+
+### Extension structure (add, modify, remove)
+
+| File | Purpose |
+|------|---------|
+| `sypher.extension.json` | Manifest: id, entry, node_min_version, setup_script, start_script |
+| `scripts/setup.cjs` | Setup: check Node version, `npm install`, `npm run build` |
+| `package.json` | `"type": "module"` for ESM; `engines.node`: `>=18` |
+| `src/` | TypeScript source; build to `dist/` |
+
+**Adding an extension:** Create `extensions/{name}/`, add manifest, setup script, and wire into gateway if needed.
+
+**Modifying:** Edit manifest or scripts; rebuild with `npm run build` in extension dir.
+
+**Removing:** Delete `extensions/{name}/`; gateway skips missing extensions.
+
+**Gateway auto-setup:** When spawning, gateway checks Node version, runs `setup_script` if dist missing, then `start_script` or `node entry`.
 
 Protocol: HTTP callback for inbound, HTTP POST for outbound.

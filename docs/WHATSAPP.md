@@ -79,7 +79,7 @@ The Baileys extension uses [@whiskeysockets/baileys](https://github.com/WhiskeyS
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm
 
 ### Setup
@@ -219,9 +219,16 @@ Manage persistent CLI terminals from WhatsApp:
 - Ensure bridge is running before gateway
 - Check `bridge_url` port matches bridge
 
+### Baileys: ERR_REQUIRE_ESM or "require() of ES Module not supported"
+
+- Extension uses ESM; ensure `package.json` has `"type": "module"` and `tsconfig` has `"module": "ES2020"`
+- Rebuild: `cd extensions/whatsapp-baileys && npm run build`
+- Node 18+ required: `node -v`
+
+
 ### Baileys: QR code doesn't appear
 
-- Check Node.js version: `node -v` (need 18+)
+- Check Node.js version: `node -v` (need 20+)
 - Ensure gateway is running (extension needs `/inbound` to exist)
 - Check `SYPHER_CORE_CALLBACK` is correct
 

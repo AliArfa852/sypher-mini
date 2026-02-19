@@ -119,26 +119,39 @@ func SpawnBaileysExtension(baileysURL, coreCallback string) *exec.Cmd {
 	if err != nil {
 		return nil
 	}
-	var extDir string
+	var ext extensions.DiscoveredExtension
 	for _, e := range exts {
 		if e.Manifest.ID == "whatsapp-baileys" {
-			extDir = e.Dir
+			ext = e
 			break
 		}
 	}
-	if extDir == "" {
+	if ext.Dir == "" {
 		// Try common paths
 		for _, d := range []string{"extensions/whatsapp-baileys", "extensions\\whatsapp-baileys"} {
 			if abs, _ := filepath.Abs(d); abs != "" {
 				if st, err := os.Stat(abs); err == nil && st.IsDir() {
-					extDir = abs
+					ext.Dir = abs
+					ext.Manifest = extensions.Manifest{Entry: "dist/index.js", NodeMin: "20"}
+					if data, err := os.ReadFile(filepath.Join(abs, "sypher.extension.json")); err == nil {
+						_ = json.Unmarshal(data, &ext.Manifest)
+					}
 					break
 				}
 			}
 		}
 	}
-	if extDir == "" {
+	if ext.Dir == "" {
 		return nil
+	}
+
+	// Check Node version if manifest specifies minimum
+	if minVer := ext.Manifest.NodeMin; minVer != "" {
+		if !extensions.CheckNodeVersion(minVer) {
+			out, _ := exec.Command("node", "-v").Output()
+			log.Printf("WhatsApp Baileys requires Node.js %s+. Current: %s Upgrade: https://nodejs.org/", minVer, strings.TrimSpace(string(out)))
+			return nil
+		}
 	}
 
 	port := "3002"
@@ -150,35 +163,45 @@ func SpawnBaileysExtension(baileysURL, coreCallback string) *exec.Cmd {
 		"PORT="+port,
 	)
 
-	entryPath := filepath.Join(extDir, "dist", "index.js")
-	nodeModules := filepath.Join(extDir, "node_modules")
+	entryPath := filepath.Join(ext.Dir, "dist", "index.js")
 	if _, err := os.Stat(entryPath); err != nil {
-		// Ensure deps installed
-		if _, err := os.Stat(nodeModules); os.IsNotExist(err) {
-			install := exec.Command("npm", "install")
-			install.Dir = extDir
-			install.Stdout = os.Stdout
-			install.Stderr = os.Stderr
-			if install.Run() != nil {
-				log.Printf("Baileys extension: npm install failed")
+		if ext.Manifest.Setup != "" {
+			if !extensions.RunSetup(ext.Dir, ext.Manifest) {
 				return nil
 			}
-		}
-		// dist not built: run npm run build
-		build := exec.Command("npm", "run", "build")
-		build.Dir = extDir
-		build.Stdout = os.Stdout
-		build.Stderr = os.Stderr
-		if build.Run() != nil {
-			return nil
+		} else {
+			nodeModules := filepath.Join(ext.Dir, "node_modules")
+			if _, err := os.Stat(nodeModules); os.IsNotExist(err) {
+				install := exec.Command("npm", "install")
+				install.Dir = ext.Dir
+				install.Stdout = os.Stdout
+				install.Stderr = os.Stderr
+				if install.Run() != nil {
+					log.Printf("Baileys extension: npm install failed")
+					return nil
+				}
+			}
+			build := exec.Command("npm", "run", "build")
+			build.Dir = ext.Dir
+			build.Stdout = os.Stdout
+			build.Stderr = os.Stderr
+			if build.Run() != nil {
+				return nil
+			}
 		}
 	}
 	if _, err := os.Stat(entryPath); err != nil {
 		return nil
 	}
 
-	cmd := exec.Command("node", entryPath)
-	cmd.Dir = extDir
+	var cmd *exec.Cmd
+	if ext.Manifest.Start != "" {
+		cmd = extensions.RunStart(ext.Dir, ext.Manifest)
+	}
+	if cmd == nil {
+		cmd = exec.Command("node", entryPath)
+	}
+	cmd.Dir = ext.Dir
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
