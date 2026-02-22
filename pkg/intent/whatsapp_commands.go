@@ -72,8 +72,21 @@ func ParseWhatsAppCommand(content string, from string, cfg *config.ChannelsConfi
 	} else if strings.HasPrefix(lower, "/cli") || strings.HasPrefix(lower, "cli") {
 		cmd = "cli"
 		args = strings.Fields(content)
-		if len(args) > 0 && (args[0] == "cli" || args[0] == "/cli") {
-			args = args[1:]
+		// Strip "cli" or "/cli" case-insensitively (user may type "Cli", "CLI", etc.)
+		if len(args) > 0 {
+			first := strings.ToLower(args[0])
+			if first == "cli" || first == "/cli" {
+				args = args[1:]
+			}
+		}
+	} else if strings.HasPrefix(lower, "/projects") || strings.HasPrefix(lower, "projects") {
+		cmd = "projects"
+		args = strings.Fields(content)
+		if len(args) > 0 {
+			first := strings.ToLower(args[0])
+			if first == "projects" || first == "/projects" {
+				args = args[1:]
+			}
 		}
 	}
 
@@ -104,7 +117,7 @@ func ParseWhatsAppCommand(content string, from string, cfg *config.ChannelsConfi
 		if TierLevel(tier) >= TierLevel(TierUser) {
 			return true, cmd, args, tier
 		}
-	case "cli":
+	case "cli", "projects":
 		if TierLevel(tier) >= TierLevel(TierUser) {
 			return true, cmd, args, tier
 		}

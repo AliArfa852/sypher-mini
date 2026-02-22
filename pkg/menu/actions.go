@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/config"
@@ -27,8 +28,24 @@ type ActionRunner interface {
 // ExecuteAction runs the given action and returns the response.
 func ExecuteAction(ctx context.Context, actionID string, cfg *config.Config, runner ActionRunner, msg bus.InboundMessage) (string, error) {
 	switch actionID {
-	case "cli_run", "cli_tail":
-		return "Reply with: /cli list to see sessions, then /cli run <N> <command> or /cli <N>", nil
+	case "cli_run":
+		if runner != nil {
+			list, _ := runner.RunCliList(ctx, msg)
+			if strings.Contains(list, "No active") {
+				return list + "\n\n_Create a session first (option 2)._", nil
+			}
+			return "*Send command to session:*\n\n" + list + "\n\n_Reply: N <command> (e.g. 1 ls -a) or use /cli run N <cmd>_", nil
+		}
+		return "Reply with: /cli run <N> <command>", nil
+	case "cli_tail":
+		if runner != nil {
+			list, _ := runner.RunCliList(ctx, msg)
+			if strings.Contains(list, "No active") {
+				return list + "\n\n_Create a session first (option 2)._", nil
+			}
+			return "*Tail session output:*\n\n" + list + "\n\n_Reply with number or use /cli N [--tail 20]_", nil
+		}
+		return "Reply with: /cli <N> [--tail 20]", nil
 	case "add_api":
 		return `*Add API key*
 
@@ -145,12 +162,17 @@ func helpText() string {
 
 *Slash commands:*
 • /status - Status
-• /cli list - List CLI sessions (terminal sessions created via menu or /cli new)
+• /cli list - List CLI sessions
 • /cli new -m "tag" - New session
-• /cli run <N> <command> - Run in session
+• /cli run <N> <command> - Run in session (e.g. /cli run 1 ls -a)
+• /cli <N> [--tail 20] - Tail session output
+• /projects list - List projects
+• /projects build <id> - Build project
+• /projects pull <id> - Git pull project
+• /projects run <id> - Run/deploy project
+• /projects add <path> - Register project
+• /projects scan - Detect projects in workspace
 • /config get <path> - Get config (operator)
 • /agents - List agents (operator)
-• /cancel <task_id> - Cancel task
-
-*Note:* Commands (sypher commands list) = custom configs for invoke_cli_agent. CLI Sessions (/cli list) = terminal sessions you create.`
+• /cancel <task_id> - Cancel task`
 }

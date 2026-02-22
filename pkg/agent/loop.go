@@ -402,7 +402,7 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 
 		minInterval := l.cfg.Providers.LLMRateLimit.MinIntervalSec
 		if !l.cfg.Providers.PaidTier && minInterval <= 0 {
-			minInterval = 3
+			minInterval = 5 // 5 sec between LLM calls (free tier) to avoid rate limits
 		}
 		for iter := 0; iter < maxIter; iter++ {
 			if t.IsCancelled() {
@@ -625,6 +625,8 @@ func (l *Loop) handleWhatsAppCommand(ctx context.Context, cmd string, args []str
 		return fmt.Sprintf("Agents: %d, Timeout: %ds", len(l.cfg.Agents.List), l.cfg.Task.TimeoutSec), nil
 	case "cli":
 		return l.handleCliCommand(ctx, args, msg)
+	case "projects":
+		return l.handleProjectsCommand(ctx, args, msg)
 	}
 	return "", nil
 }
@@ -718,6 +720,119 @@ func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.Inbo
 		}
 		return fmt.Sprintf("Session %d (%s) last %d lines:\n%s", id, s.Tag, tail, out), nil
 	}
+}
+
+// handleProjectsCommand handles /projects list|build|pull|run|add|scan.
+func (l *Loop) handleProjectsCommand(ctx context.Context, args []string, msg bus.InboundMessage) (string, error) {
+	if len(args) == 0 {
+		return l.RunProjectsList(ctx, msg)
+	}
+	sub := strings.ToLower(args[0])
+	switch sub {
+	case "list", "ls":
+		return l.RunProjectsList(ctx, msg)
+	case "build":
+		if len(args) < 2 {
+			return l.RunProjectsBuild(ctx, "", msg)
+		}
+		return l.RunProjectsBuild(ctx, args[1], msg)
+	case "pull":
+		if len(args) < 2 {
+			return l.RunProjectsPull(ctx, "", msg)
+		}
+		return l.RunProjectsPull(ctx, args[1], msg)
+	case "run", "deploy":
+		if len(args) < 2 {
+			return l.RunProjectsRun(ctx, "", msg)
+		}
+		return l.RunProjectsRun(ctx, args[1], msg)
+	case "add", "register":
+		if len(args) < 2 {
+			return "*Add project*\n\nUsage: projects add <path>\nExample: projects add myapp\n\nPath is relative to workspace. Or use 'projects scan' to auto-detect.", nil
+		}
+		return l.RunProjectsAdd(ctx, args[1], msg)
+	case "scan":
+		return l.RunProjectsScan(ctx, msg)
+	default:
+		return "Usage: projects list | build <id> | pull <id> | run <id> | add <path> | scan", nil
+	}
+}
+
+// RunProjectsRun runs/deploys a project (run_command or docker-compose).
+func (l *Loop) RunProjectsRun(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		return "No projects. Add projects to workspace/code-projects/", nil
+	}
+	if projectID == "" {
+		out := "*Select project to run:*\n\n" + formatProjects(projects)
+		out += "\n\n_Reply: projects run <id>_"
+		return out, nil
+	}
+	p, err := l.projectStore.Get(projectID)
+	if err != nil || p == nil {
+		return "Project not found: " + projectID, nil
+	}
+	dir := p.AbsPath(l.cfg.Agents.Defaults.Workspace)
+	cmd := p.RunCommand
+	if cmd == "" {
+		cmd = "npm run dev"
+	}
+	// Prepend env activation if configured
+	fullCmd := cmd
+	if p.EnvActivate != "" {
+		fullCmd = p.EnvActivate + " && " + cmd
+	}
+	req := tools.Request{TaskID: "menu-run", AgentID: "main", Name: "exec", Args: map[string]interface{}{
+		"command":     fullCmd,
+		"working_dir": dir,
+	}}
+	resp := l.execTool.Execute(ctx, req)
+	if resp.IsError {
+		return "Run failed: " + resp.ForLLM, nil
+	}
+	return "*Run output*\n\n" + resp.ForLLM, nil
+}
+
+// RunProjectsAdd registers a project from a path (relative to workspace).
+func (l *Loop) RunProjectsAdd(ctx context.Context, pathArg string, msg bus.InboundMessage) (string, error) {
+	ws := l.projectStore.Workspace()
+	absPath := filepath.Join(ws, pathArg)
+	if !filepath.IsAbs(pathArg) {
+		absPath, _ = filepath.Abs(filepath.Join(ws, pathArg))
+	}
+	p := project.SuggestProject(absPath, ws)
+	if err := l.projectStore.Add(p); err != nil {
+		return "Add failed: " + err.Error(), nil
+	}
+	return fmt.Sprintf("*Project added:* %s\nPath: %s\n\nEdit ~/.sypher-mini/workspace/code-projects/%s.json to set build_command, run_command, env_activate.", p.Name, p.Path, p.ID), nil
+}
+
+// RunProjectsScan scans workspace and lists detected projects (optionally registers unregistered).
+func (l *Loop) RunProjectsScan(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	scanned := project.ScanWorkspace(l.projectStore.Workspace())
+	existing, _ := l.projectStore.List()
+	existingPaths := make(map[string]bool)
+	for _, p := range existing {
+		existingPaths[p.AbsPath(l.cfg.Agents.Defaults.Workspace)] = true
+	}
+	var newOnes []string
+	for _, path := range scanned {
+		if !existingPaths[path] {
+			newOnes = append(newOnes, path)
+		}
+	}
+	if len(scanned) == 0 {
+		return "No projects detected in workspace.", nil
+	}
+	out := "*Detected projects:*\n\n" + formatPaths(scanned, 1)
+	if len(newOnes) > 0 {
+		out += "\n\n_Unregistered: use 'projects add <path>' to add (e.g. projects add " + filepath.Base(newOnes[0]) + ")_"
+	}
+	return out, nil
 }
 
 // RunCliList implements menu.ActionRunner.

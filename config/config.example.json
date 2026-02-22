@@ -45,8 +45,8 @@
     "paid_tier": false,
     "llm_rate_limit": {
       "max_per_window": 2,
-      "window_sec": 15,
-      "min_interval_sec": 3
+      "window_sec": 30,
+      "min_interval_sec": 5
     },
     "cerebras": { "api_key": "", "default_model": "llama-3.1-70b" },
     "openai": { "api_key": "", "default_model": "gpt-4o-mini" },

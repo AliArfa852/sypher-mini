@@ -148,7 +148,7 @@ func NewFallbackProvider(cfg *config.Config) *FallbackProvider {
 		if cfg.Providers.LLMRateLimit.MaxPerWindow > 0 || cfg.Providers.LLMRateLimit.WindowSec > 0 {
 			rl = newLLMRateLimiter(cfg.Providers.LLMRateLimit.MaxPerWindow, cfg.Providers.LLMRateLimit.WindowSec)
 		} else {
-			rl = newLLMRateLimiter(2, 15) // default: 2 per 15 sec (free tier)
+			rl = newLLMRateLimiter(2, 30) // default: 2 per 30 sec (free tier, reduces API errors)
 		}
 	}
 	return &FallbackProvider{
