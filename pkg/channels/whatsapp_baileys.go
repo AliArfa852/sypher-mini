@@ -141,9 +141,17 @@ func SpawnBaileysExtension(baileysURL, coreCallback string) *exec.Cmd {
 		}
 	}
 	if ext.Dir == "" {
-		// Try common paths
-		for _, d := range []string{"extensions/whatsapp-baileys", "extensions\\whatsapp-baileys"} {
-			if abs, _ := filepath.Abs(d); abs != "" {
+		// Try common paths (cwd-relative and ~/sypher-mini when run from home)
+		fallbacks := []string{"extensions/whatsapp-baileys", "extensions\\whatsapp-baileys"}
+		if home, err := os.UserHomeDir(); err == nil {
+			fallbacks = append(fallbacks, filepath.Join(home, "sypher-mini", "extensions", "whatsapp-baileys"))
+		}
+		for _, d := range fallbacks {
+			abs := d
+			if !filepath.IsAbs(d) {
+				abs, _ = filepath.Abs(d)
+			}
+			if abs != "" {
 				if st, err := os.Stat(abs); err == nil && st.IsDir() {
 					ext.Dir = abs
 					ext.Manifest = extensions.Manifest{Entry: "dist/index.js", NodeMin: "20"}

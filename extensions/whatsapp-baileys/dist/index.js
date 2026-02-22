@@ -15,16 +15,32 @@ const PORT = parseInt(process.env.PORT || '3002', 10);
 const CORE_CALLBACK = process.env.SYPHER_CORE_CALLBACK || 'http://localhost:18790/inbound';
 let sock = null;
 async function sendToCore(payload) {
-    try {
-        const url = new URL(CORE_CALLBACK);
-        await fetch(url.toString(), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-    }
-    catch (e) {
-        console.error('Failed to send to core:', e);
+    const url = new URL(CORE_CALLBACK);
+    const opts = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    };
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const res = await fetch(url.toString(), opts);
+            if (res.ok)
+                return;
+        }
+        catch (e) {
+            const errMsg = String(e?.message ?? e?.cause ?? '');
+            const isRefused = errMsg.includes('ECONNREFUSED');
+            if (attempt === maxRetries - 1) {
+                console.error('Failed to send to core:', e);
+                if (isRefused) {
+                    console.error('Hint: Start the gateway first: sypher gateway (must run before this extension)');
+                }
+            }
+            else {
+                await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+            }
+        }
     }
 }
 async function connect() {

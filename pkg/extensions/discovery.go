@@ -70,12 +70,21 @@ func Discover(extensionsDir string) ([]DiscoveredExtension, error) {
 }
 
 // DiscoverFromWorkspace discovers extensions relative to the workspace root.
-// It looks for extensions/ in the same directory as the binary or in cwd.
+// It looks for extensions/ in cwd, binary dir, or common locations (e.g. ~/sypher-mini).
 func DiscoverFromWorkspace(workspaceRoot string) ([]DiscoveredExtension, error) {
 	candidates := []string{
 		filepath.Join(workspaceRoot, "extensions"),
 		"extensions",
 		"./extensions",
+	}
+	// When run from home dir, also try ~/sypher-mini/extensions
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "sypher-mini", "extensions"))
+	}
+	// When binary is in project root (e.g. ./sypher or go run), use its dir
+	if execPath, err := os.Executable(); err == nil {
+		binDir := filepath.Dir(execPath)
+		candidates = append(candidates, filepath.Join(binDir, "extensions"))
 	}
 	for _, d := range candidates {
 		abs, _ := filepath.Abs(d)
