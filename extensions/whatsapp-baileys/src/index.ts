@@ -19,6 +19,7 @@ const CORE_CALLBACK = process.env.SYPHER_CORE_CALLBACK || 'http://localhost:1879
 interface InboundPayload {
   type: string;
   from: string;
+  from_pn?: string;  // Phone number JID (e.g. 923406498469@s.whatsapp.net) when remoteJid is LID - for allow_from matching
   content: string;
   chat_id: string;
 }
@@ -84,9 +85,13 @@ async function connect() {
       if (m.message?.conversation || m.message?.extendedTextMessage?.text) {
         const text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
         const from = m.key.remoteJid || '';
+        // When remoteJid is LID (e.g. 60838547296357@lid), include from_pn for allow_from matching by phone number
+        const key = m.key as { senderPn?: string; participantPn?: string };
+        const fromPn = key?.senderPn || key?.participantPn;
         await sendToCore({
           type: 'inbound',
           from,
+          ...(fromPn && { from_pn: fromPn }),
           content: text,
           chat_id: from,
         });

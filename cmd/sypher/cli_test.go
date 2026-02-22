@@ -332,7 +332,7 @@ func TestCLI_SafeFlag(t *testing.T) {
 	}
 }
 
-// TestIsAllowedSender verifies WhatsApp allow_from normalization (Baileys JID vs config +123).
+// TestIsAllowedSender verifies WhatsApp allow_from normalization (Baileys JID vs config +123, LID format).
 func TestIsAllowedSender(t *testing.T) {
 	tests := []struct {
 		from      string
@@ -345,6 +345,9 @@ func TestIsAllowedSender(t *testing.T) {
 		{"1234567890@s.whatsapp.net", []string{}, true},
 		{"1234567890@s.whatsapp.net", []string{"+9999999999"}, false},
 		{"other@s.whatsapp.net", []string{"+1234567890"}, false},
+		{"60838547296357@lid", []string{"60838547296357"}, true},
+		{"60838547296357@lid", []string{"+60838547296357"}, true},
+		{"202383321759875@lid", []string{"202383321759875"}, true},
 	}
 	for _, tt := range tests {
 		got := isAllowedSender(tt.from, tt.allowFrom)

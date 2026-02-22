@@ -76,9 +76,13 @@ async function connect() {
             if (m.message?.conversation || m.message?.extendedTextMessage?.text) {
                 const text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
                 const from = m.key.remoteJid || '';
+                // When remoteJid is LID (e.g. 60838547296357@lid), include from_pn for allow_from matching by phone number
+                const key = m.key;
+                const fromPn = key?.senderPn || key?.participantPn;
                 await sendToCore({
                     type: 'inbound',
                     from,
+                    ...(fromPn && { from_pn: fromPn }),
                     content: text,
                     chat_id: from,
                 });

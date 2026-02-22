@@ -180,7 +180,8 @@ func isAllowedSender(from string, allowFrom []string) bool {
 		return false
 	}
 	for _, a := range allowFrom {
-		if a == from || utils.NormalizeWhatsAppID(a) == fromNorm {
+		aNorm := utils.NormalizeWhatsAppID(a)
+		if a == from || aNorm == fromNorm {
 			return true
 		}
 	}
@@ -317,6 +318,7 @@ func gatewayCmd(args []string, safeMode bool) {
 		var payload struct {
 			Type    string `json:"type"`
 			From    string `json:"from"`
+			FromPn  string `json:"from_pn"` // Phone number JID when from is LID - for allow_from matching
 			Content string `json:"content"`
 			ChatID  string `json:"chat_id"`
 		}
@@ -325,8 +327,14 @@ func gatewayCmd(args []string, safeMode bool) {
 			return
 		}
 		// Enforce allow_from: drop messages from non-allowed senders (silent)
-		if !isAllowedSender(payload.From, cfg.Channels.WhatsApp.AllowFrom) {
-			log.Printf("[gateway] inbound dropped: from=%q not in allow_from", payload.From)
+		// Use from_pn (phone number) when available for LID messages - matches user's +923406498469 etc
+		fromForAllow := payload.From
+		if payload.FromPn != "" {
+			fromForAllow = payload.FromPn
+		}
+		if !isAllowedSender(fromForAllow, cfg.Channels.WhatsApp.AllowFrom) {
+			// When from is LID, from_pn (phone) may be sent by extension for matching - if missing, add LID digits
+			log.Printf("[gateway] inbound dropped: from=%q not in allow_from (add phone e.g. +923406498469 or LID digits %q)", payload.From, utils.NormalizeWhatsAppID(payload.From))
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 			return
@@ -340,12 +348,16 @@ func gatewayCmd(args []string, safeMode bool) {
 		if chatID == "" {
 			chatID = payload.From
 		}
+		senderID := payload.From
+		if payload.FromPn != "" {
+			senderID = payload.FromPn
+		}
 		log.Printf("[gateway] inbound from=%q content=%q", payload.From, truncateForLog(content, 60))
 		msgBus.PublishInbound(bus.InboundMessage{
 			Channel:  "whatsapp",
 			ChatID:   chatID,
 			Content:  content,
-			SenderID: payload.From,
+			SenderID: senderID,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
