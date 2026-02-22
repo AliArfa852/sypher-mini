@@ -207,12 +207,27 @@ func clampRetryDuration(sec float64) time.Duration {
 	return d
 }
 
-// Chat tries each provider with retries. Respects LLM rate limit (default 2 per 15 sec).
+const (
+	failuresBeforeSwitch = 2
+	providerSwitchDelay = 10 * time.Second
+)
+
+// Chat tries each provider with retries. Switches to next provider after 2 failures.
+// Waits 10 sec when switching providers. Returns user-friendly error when all fail.
 func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
 	var lastErr error
-	for _, e := range f.entries {
+	for i, e := range f.entries {
 		if e.Provider == nil {
 			continue
+		}
+		// 10 sec delay when switching to a new provider (not the first)
+		if i > 0 {
+			log.Printf("LLM switching to %s after previous provider failed, waiting %v", e.Name, providerSwitchDelay)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(providerSwitchDelay):
+			}
 		}
 		// Circuit breaker: wait if we've had 2+ consecutive 429s
 		if f.circuitBreaker != nil && f.circuitBreaker.isTripped() {
@@ -220,6 +235,7 @@ func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools [
 				return nil, err
 			}
 		}
+		consecutiveFailures := 0
 		maxAttempts := f.retryMax + 1
 		for attempt := 0; attempt < maxAttempts; attempt++ {
 			if f.rateLimit != nil {
@@ -239,11 +255,8 @@ func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools [
 					} else {
 						backoff = 60 * time.Second
 					}
-					if attempt >= 2 {
-						break
-					}
 				}
-				log.Printf("LLM %s rate limited, waiting %v before retry", e.Name, backoff)
+				log.Printf("LLM %s attempt %d failed, waiting %v before retry", e.Name, attempt, backoff)
 				select {
 				case <-ctx.Done():
 					return nil, ctx.Err()
@@ -256,13 +269,34 @@ func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools [
 				return resp, nil
 			}
 			lastErr = err
+			consecutiveFailures++
 			if !is429(err) {
 				f.circuitBreaker.recordSuccess()
 			}
 			log.Printf("LLM %s attempt %d failed: %v", e.Name, attempt+1, err)
+			// Switch to next provider after 2 failures
+			if consecutiveFailures >= failuresBeforeSwitch {
+				log.Printf("LLM %s failed %d times, switching to next provider", e.Name, consecutiveFailures)
+				break
+			}
 		}
 	}
 	return nil, lastErr
+}
+
+// UserFriendlyLLMError returns a short, user-safe message for LLM errors (no raw JSON).
+func UserFriendlyLLMError(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED") || strings.Contains(s, "quota") || strings.Contains(s, "rate") {
+		return "API rate limit reached. Try again in a few minutes. If you have multiple APIs configured, another provider may be used."
+	}
+	if strings.Contains(s, "500") || strings.Contains(s, "503") || strings.Contains(s, "unavailable") {
+		return "API temporarily unavailable. Please try again later."
+	}
+	return "LLM API error. Please check your API keys and quotas."
 }
 
 // GetDefaultModel returns the first provider's default model.

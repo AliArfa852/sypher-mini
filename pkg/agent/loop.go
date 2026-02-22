@@ -133,6 +133,21 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	}
 	l.projectStore = project.NewStore(workspace)
 	l.menuHandler = menu.NewHandler(cfg, l, "")
+	// Wire project dirs into exec tool so CLI/exec can run in registered project dirs
+	execTool.SetProjectDirsResolver(func() []string {
+		projects, err := l.projectStore.List()
+		if err != nil {
+			return nil
+		}
+		dirs := make([]string, 0, len(projects))
+		for _, p := range projects {
+			abs := p.AbsPath(cfg.Agents.Defaults.Workspace)
+			if abs != "" {
+				dirs = append(dirs, abs)
+			}
+		}
+		return dirs
+	})
 	return l
 }
 
@@ -430,7 +445,7 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			})
 			if err != nil {
 				t.Transition(task.StateFailed)
-				result = fmt.Sprintf("LLM error: %v", err)
+				result = providers.UserFriendlyLLMError(err)
 				return nil
 			}
 
@@ -631,6 +646,26 @@ func (l *Loop) handleWhatsAppCommand(ctx context.Context, cmd string, args []str
 	return "", nil
 }
 
+// extractCliRunCommand extracts the command from "cli run N <cmd>" using raw content for quote-aware parsing.
+func extractCliRunCommand(content, sessionID string) string {
+	lower := strings.ToLower(content)
+	// Find "run N " or "run N" at end - sessionID is the N
+	needle := "run " + sessionID
+	idx := strings.Index(lower, needle)
+	if idx < 0 {
+		return ""
+	}
+	rest := content[idx+len(needle):]
+	rest = strings.TrimSpace(rest)
+	// Trim surrounding quotes so 'ls -a' becomes ls -a
+	if len(rest) >= 2 {
+		if (rest[0] == '\'' && rest[len(rest)-1] == '\'') || (rest[0] == '"' && rest[len(rest)-1] == '"') {
+			rest = rest[1 : len(rest)-1]
+		}
+	}
+	return rest
+}
+
 // handleCliCommand handles sypher cli list|new|N [--tail N].
 func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.InboundMessage) (string, error) {
 	if len(args) == 0 {
@@ -645,18 +680,42 @@ func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.Inbo
 		if _, err := fmt.Sscanf(args[1], "%d", &sid); err != nil {
 			return "Invalid session ID", nil
 		}
-		cmdStr := strings.Join(args[2:], " ")
+		cmdStr := extractCliRunCommand(msg.Content, args[1])
+		if cmdStr == "" {
+			cmdStr = strings.Join(args[2:], " ")
+		}
 		s := l.cliManager.Get(sid)
 		if s == nil {
 			return fmt.Sprintf("Session %d not found", sid), nil
 		}
+		// Handle "cd" specially: update session working dir if path is allowed
+		if strings.HasPrefix(strings.TrimSpace(cmdStr), "cd ") {
+			pathPart := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(cmdStr), "cd "))
+			if pathPart != "" && l.execTool.IsWorkingDirAllowed(pathPart) {
+				expanded := config.ExpandPath(pathPart)
+				if expanded == "" {
+					expanded = pathPart
+				}
+				abs, _ := filepath.Abs(expanded)
+				if abs != "" {
+					s.SetWorkingDir(abs)
+					l.cliManager.Persist()
+					return fmt.Sprintf("Changed directory to %s", abs), nil
+				}
+			}
+			return "Path not allowed. Register the project with 'projects add <path>' first.", nil
+		}
 		// Run via exec and append output to session
+		execArgs := map[string]interface{}{"command": cmdStr}
+		if wd := s.GetWorkingDir(); wd != "" {
+			execArgs["working_dir"] = wd
+		}
 		req := tools.Request{
 			ToolCallID: "cli-run",
 			TaskID:    "cli-" + args[1],
 			AgentID:   "main",
 			Name:      "exec",
-			Args:      map[string]interface{}{"command": cmdStr},
+			Args:      execArgs,
 		}
 		resp := l.execTool.Execute(ctx, req)
 		output := resp.ForLLM
@@ -752,7 +811,14 @@ func (l *Loop) handleProjectsCommand(ctx context.Context, args []string, msg bus
 		}
 		return l.RunProjectsAdd(ctx, args[1], msg)
 	case "scan":
-		return l.RunProjectsScan(ctx, msg)
+		scanPath := ""
+		if len(args) >= 2 {
+			scanPath = args[1]
+			if strings.HasPrefix(scanPath, "~") {
+				scanPath = config.ExpandPath(scanPath)
+			}
+		}
+		return l.RunProjectsScan(ctx, scanPath, msg)
 	default:
 		return "Usage: projects list | build <id> | pull <id> | run <id> | add <path> | scan", nil
 	}
@@ -797,12 +863,23 @@ func (l *Loop) RunProjectsRun(ctx context.Context, projectID string, msg bus.Inb
 	return "*Run output*\n\n" + resp.ForLLM, nil
 }
 
-// RunProjectsAdd registers a project from a path (relative to workspace).
+// RunProjectsAdd registers a project from a path (relative to workspace or ~/path).
 func (l *Loop) RunProjectsAdd(ctx context.Context, pathArg string, msg bus.InboundMessage) (string, error) {
 	ws := l.projectStore.Workspace()
-	absPath := filepath.Join(ws, pathArg)
-	if !filepath.IsAbs(pathArg) {
-		absPath, _ = filepath.Abs(filepath.Join(ws, pathArg))
+	var absPath string
+	if strings.HasPrefix(pathArg, "~") {
+		absPath = config.ExpandPath(pathArg)
+		if absPath == "" {
+			absPath = pathArg
+		}
+	} else if filepath.IsAbs(pathArg) {
+		absPath = pathArg
+	} else {
+		var err error
+		absPath, err = filepath.Abs(filepath.Join(ws, pathArg))
+		if err != nil {
+			absPath = filepath.Join(ws, pathArg)
+		}
 	}
 	p := project.SuggestProject(absPath, ws)
 	if err := l.projectStore.Add(p); err != nil {
@@ -811,9 +888,13 @@ func (l *Loop) RunProjectsAdd(ctx context.Context, pathArg string, msg bus.Inbou
 	return fmt.Sprintf("*Project added:* %s\nPath: %s\n\nEdit ~/.sypher-mini/workspace/code-projects/%s.json to set build_command, run_command, env_activate.", p.Name, p.Path, p.ID), nil
 }
 
-// RunProjectsScan scans workspace and lists detected projects (optionally registers unregistered).
-func (l *Loop) RunProjectsScan(ctx context.Context, msg bus.InboundMessage) (string, error) {
-	scanned := project.ScanWorkspace(l.projectStore.Workspace())
+// RunProjectsScan scans workspace (or path if given) and lists detected projects.
+func (l *Loop) RunProjectsScan(ctx context.Context, path string, msg bus.InboundMessage) (string, error) {
+	scanDir := l.projectStore.Workspace()
+	if path != "" {
+		scanDir = path
+	}
+	scanned := project.ScanPath(scanDir)
 	existing, _ := l.projectStore.List()
 	existingPaths := make(map[string]bool)
 	for _, p := range existing {

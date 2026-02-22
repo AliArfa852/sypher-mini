@@ -64,16 +64,45 @@ var defaultDenyPatterns = []*regexp.Regexp{
 
 // ExecTool executes shell commands with safety checks.
 type ExecTool struct {
-	workingDir          string
-	timeout             time.Duration
-	denyPatterns        []*regexp.Regexp
-	restrictToWorkspace bool
-	allowGitPush        bool
-	allowDirs           []string
-	auditLogger         *audit.Logger
-	procTracker         *process.Tracker
-	authorizedTerms     []string
-	safeMode            bool
+	workingDir           string
+	timeout              time.Duration
+	denyPatterns         []*regexp.Regexp
+	restrictToWorkspace  bool
+	allowGitPush         bool
+	allowDirs            []string
+	projectDirsResolver func() []string // returns absolute paths of registered project dirs
+	auditLogger          *audit.Logger
+	procTracker          *process.Tracker
+	authorizedTerms      []string
+	safeMode             bool
+}
+
+// SetProjectDirsResolver sets a function that returns project dirs to allow (in addition to allow_dirs).
+func (t *ExecTool) SetProjectDirsResolver(r func() []string) {
+	t.projectDirsResolver = r
+}
+
+// IsWorkingDirAllowed returns true if the given path is allowed for working_dir (workspace, allow_dirs, or project dirs).
+func (t *ExecTool) IsWorkingDirAllowed(dir string) bool {
+	expanded := config.ExpandPath(dir)
+	if expanded == "" {
+		expanded = dir
+	}
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return false
+	}
+	absClean := filepath.Clean(abs)
+	if t.isInAllowDirs(absClean) {
+		return true
+	}
+	wsAbs, _ := filepath.Abs(t.workingDir)
+	wsClean := filepath.Clean(wsAbs)
+	rel, err := filepath.Rel(wsClean, absClean)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 // NewExecTool creates an exec tool.
@@ -288,9 +317,29 @@ func resolveCommandAlias(cmd string) string {
 	return cmd
 }
 
+// expandTildeInCommand expands ~ and ~/path in the command for path validation.
+func expandTildeInCommand(cmdStr string) string {
+	// Replace ~/path with expanded path for validation
+	if strings.Contains(cmdStr, "~") {
+		// Match ~ or ~/something (not ~~)
+		re := regexp.MustCompile(`~(?:/[^\s'"]*)?`)
+		return re.ReplaceAllStringFunc(cmdStr, func(m string) string {
+			exp := config.ExpandPath(m)
+			if exp != "" {
+				return exp
+			}
+			return m
+		})
+	}
+	return cmdStr
+}
+
 // guardWorkspaceAndCommand validates working directory and paths in the command string.
 // Returns non-empty error message if validation fails.
 func (t *ExecTool) guardWorkspaceAndCommand(workingDir, cmdStr string) string {
+	// Expand ~ in command before path validation so ~/sypher-mini is validated correctly
+	cmdStr = expandTildeInCommand(cmdStr)
+
 	wsAbs, err := filepath.Abs(t.workingDir)
 	if err != nil {
 		wsAbs = t.workingDir
@@ -308,7 +357,7 @@ func (t *ExecTool) guardWorkspaceAndCommand(workingDir, cmdStr string) string {
 	}
 	absClean := filepath.Clean(abs)
 
-	// Allow working_dir in tools.exec.allow_dirs
+	// Allow working_dir in tools.exec.allow_dirs or registered project dirs
 	if t.isInAllowDirs(absClean) {
 		// Path is allowed; continue to command path validation
 	} else {
@@ -353,9 +402,30 @@ func (t *ExecTool) guardWorkspaceAndCommand(workingDir, cmdStr string) string {
 	return ""
 }
 
+// getEffectiveAllowDirs returns allow_dirs plus registered project dirs.
+func (t *ExecTool) getEffectiveAllowDirs() []string {
+	out := make([]string, 0, len(t.allowDirs)+16)
+	for _, d := range t.allowDirs {
+		if d != "" {
+			out = append(out, d)
+		}
+	}
+	if t.projectDirsResolver != nil {
+		for _, d := range t.projectDirsResolver() {
+			if d != "" {
+				expanded := config.ExpandPath(d)
+				if expanded != "" {
+					out = append(out, expanded)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // isInAllowDirs returns true if path is within any of the allowed directories.
 func (t *ExecTool) isInAllowDirs(absPath string) bool {
-	for _, allowed := range t.allowDirs {
+	for _, allowed := range t.getEffectiveAllowDirs() {
 		if allowed == "" {
 			continue
 		}

@@ -17,9 +17,19 @@ var projectMarkers = []string{
 	".git",
 }
 
+// ScanPath scans a directory for project markers (same logic as ScanWorkspace).
+func ScanPath(dir string) []string {
+	d := filepath.Clean(dir)
+	return scanDir(d)
+}
+
 // ScanWorkspace finds directories that look like projects (contain package.json, go.mod, etc.).
 func ScanWorkspace(workspace string) []string {
 	ws := filepath.Clean(workspace)
+	return scanDir(ws)
+}
+
+func scanDir(ws string) []string {
 	var found []string
 	_ = filepath.Walk(ws, func(path string, info os.FileInfo, err error) error {
 		if err != nil || !info.IsDir() {

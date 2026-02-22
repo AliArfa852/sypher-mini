@@ -10,14 +10,15 @@ const (
 	MaxTailLines     = 100
 )
 
-// Session holds a CLI terminal session with tag and output buffer.
+// Session holds a CLI terminal session with tag, output buffer, and optional working directory.
 type Session struct {
-	ID          int
-	Tag         string
-	Created     time.Time
+	ID           int
+	Tag          string
+	Created      time.Time
 	LastActivity time.Time
-	Output      *ringBuffer
-	mu          sync.RWMutex
+	Output       *ringBuffer
+	WorkingDir   string // if set, exec runs in this dir
+	mu           sync.RWMutex
 }
 
 // Manager stores active CLI sessions.
@@ -93,6 +94,21 @@ func (s *Session) Append(lines string) {
 	defer s.mu.Unlock()
 	s.LastActivity = time.Now()
 	s.Output.Append(lines)
+}
+
+// SetWorkingDir sets the session's working directory for subsequent execs.
+func (s *Session) SetWorkingDir(dir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.WorkingDir = dir
+	s.LastActivity = time.Now()
+}
+
+// GetWorkingDir returns the session's working directory (empty = use default).
+func (s *Session) GetWorkingDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.WorkingDir
 }
 
 // Tail returns the last n lines (capped at MaxTailLines).

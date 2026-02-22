@@ -21,6 +21,7 @@ type persistedSession struct {
 	Created      time.Time `json:"created"`
 	LastActivity time.Time `json:"last_activity"`
 	OutputTail   string    `json:"output_tail"`
+	WorkingDir   string    `json:"working_dir,omitempty"`
 }
 
 // DefaultSessionsDir returns ~/.sypher-mini/cli-sessions.
@@ -72,6 +73,7 @@ func (m *Manager) load() {
 			Created:      ps.Created,
 			LastActivity: ps.LastActivity,
 			Output:       rb,
+			WorkingDir:   ps.WorkingDir,
 		}
 		m.sessions[ps.ID] = s
 	}
@@ -95,6 +97,7 @@ func (m *Manager) Persist() {
 	for _, s := range sessions {
 		s.mu.RLock()
 		tail := s.Output.Tail(MaxTailLines)
+		wd := s.WorkingDir
 		s.mu.RUnlock()
 		state.Sessions = append(state.Sessions, persistedSession{
 			ID:           s.ID,
@@ -102,6 +105,7 @@ func (m *Manager) Persist() {
 			Created:      s.Created,
 			LastActivity: s.LastActivity,
 			OutputTail:   tail,
+			WorkingDir:   wd,
 		})
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
