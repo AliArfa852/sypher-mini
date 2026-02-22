@@ -123,6 +123,8 @@ func (p *Provider) isValidModel(model string) bool {
 		return strings.HasPrefix(model, "llama-")
 	case "openai":
 		return strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1-")
+	case "deepseek":
+		return strings.HasPrefix(model, "deepseek-")
 	default:
 		return true
 	}

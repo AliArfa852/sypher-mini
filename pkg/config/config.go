@@ -210,6 +210,7 @@ type ProvidersConfig struct {
 	OpenAI          ProviderConfig         `json:"openai"`
 	Anthropic       ProviderConfig         `json:"anthropic"`
 	Gemini          ProviderConfig         `json:"gemini"`
+	DeepSeek        ProviderConfig         `json:"deepseek"`
 }
 
 // LLMRateLimitConfig limits API calls per time window (e.g. 2 per 15 sec).
@@ -221,8 +222,9 @@ type LLMRateLimitConfig struct {
 
 // ProviderConfig holds a single provider's config.
 type ProviderConfig struct {
-	APIKey  string `json:"api_key"`
-	APIBase string `json:"api_base,omitempty"`
+	APIKey       string `json:"api_key"`
+	APIBase      string `json:"api_base,omitempty"`
+	DefaultModel string `json:"default_model,omitempty"` // e.g. "llama-3.1-70b", "gpt-4o-mini", "gemini-2.5-flash-lite"
 }
 
 // TaskConfig holds task lifecycle config.

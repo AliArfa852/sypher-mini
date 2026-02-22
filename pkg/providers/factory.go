@@ -35,6 +35,22 @@ func NewProviderWithFallbacks(cfg *config.Config) []ProviderEntry {
 	return listProviders(cfg)
 }
 
+// Default models per provider (cost-effective, sufficient quality for most tasks).
+const (
+	defaultCerebrasModel  = "llama-3.1-70b"
+	defaultOpenAIModel    = "gpt-4o-mini"
+	defaultAnthropicModel = "claude-3-5-sonnet-20241022"
+	defaultGeminiModel    = "gemini-2.5-flash-lite"
+	defaultDeepSeekModel  = "deepseek-chat"
+)
+
+func defaultModel(cfg *config.ProviderConfig, fallback string) string {
+	if cfg.DefaultModel != "" {
+		return cfg.DefaultModel
+	}
+	return fallback
+}
+
 func listProviders(cfg *config.Config) []ProviderEntry {
 	strategy := RoutingStrategy(strings.ToLower(cfg.Providers.RoutingStrategy))
 	if strategy == "" {
@@ -43,17 +59,30 @@ func listProviders(cfg *config.Config) []ProviderEntry {
 
 	var entries []ProviderEntry
 
-	// cheap_first: Cerebras -> OpenAI -> Anthropic (Anthropic/Gemini need separate impl)
+	// cheap_first: Cerebras -> DeepSeek -> OpenAI -> Anthropic -> Gemini
 	if strategy == RoutingCheapFirst || strategy == RoutingFastFirst {
 		if key := getAPIKey("CEREBRAS_API_KEY", cfg.Providers.Cerebras.APIKey); key != "" {
 			base := cfg.Providers.Cerebras.APIBase
 			if base == "" {
 				base = "https://api.cerebras.ai/v1"
 			}
-		entries = append(entries, ProviderEntry{
-			Provider: openai_compat.New("cerebras", key, base, "llama-3.1-70b"),
-			Name:     "cerebras",
-		})
+			model := defaultModel(&cfg.Providers.Cerebras, defaultCerebrasModel)
+			entries = append(entries, ProviderEntry{
+				Provider: openai_compat.New("cerebras", key, base, model),
+				Name:     "cerebras",
+			})
+		}
+
+		if key := getAPIKey("DEEPSEEK_API_KEY", cfg.Providers.DeepSeek.APIKey); key != "" {
+			base := cfg.Providers.DeepSeek.APIBase
+			if base == "" {
+				base = "https://api.deepseek.com/v1"
+			}
+			model := defaultModel(&cfg.Providers.DeepSeek, defaultDeepSeekModel)
+			entries = append(entries, ProviderEntry{
+				Provider: openai_compat.New("deepseek", key, base, model),
+				Name:     "deepseek",
+			})
 		}
 	}
 
@@ -62,22 +91,25 @@ func listProviders(cfg *config.Config) []ProviderEntry {
 		if base == "" {
 			base = "https://api.openai.com/v1"
 		}
+		model := defaultModel(&cfg.Providers.OpenAI, defaultOpenAIModel)
 		entries = append(entries, ProviderEntry{
-			Provider: openai_compat.New("openai", key, base, "gpt-4o-mini"),
+			Provider: openai_compat.New("openai", key, base, model),
 			Name:     "openai",
 		})
 	}
 
 	if key := getAPIKey("ANTHROPIC_API_KEY", cfg.Providers.Anthropic.APIKey); key != "" {
+		model := defaultModel(&cfg.Providers.Anthropic, defaultAnthropicModel)
 		entries = append(entries, ProviderEntry{
-			Provider: anthropic.New(key, "claude-3-5-sonnet-20241022"),
+			Provider: anthropic.New(key, model),
 			Name:     "anthropic",
 		})
 	}
 
 	if key := getAPIKey("GEMINI_API_KEY", cfg.Providers.Gemini.APIKey); key != "" {
+		model := defaultModel(&cfg.Providers.Gemini, defaultGeminiModel)
 		entries = append(entries, ProviderEntry{
-			Provider: gemini.New(key, "gemini-2.5-flash-lite"),
+			Provider: gemini.New(key, model),
 			Name:     "gemini",
 		})
 	}

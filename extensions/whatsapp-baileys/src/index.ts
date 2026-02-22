@@ -38,7 +38,8 @@ async function sendToCore(payload: InboundPayload) {
       const res = await fetch(url.toString(), opts);
       if (res.ok) return;
     } catch (e) {
-      const errMsg = String((e as Error)?.message ?? (e as Error)?.cause ?? '');
+      const err = e as Error & { cause?: unknown };
+      const errMsg = [err?.message, String(err?.cause ?? ''), String(e)].join(' ');
       const isRefused = errMsg.includes('ECONNREFUSED');
       if (attempt === maxRetries - 1) {
         console.error('Failed to send to core:', e);

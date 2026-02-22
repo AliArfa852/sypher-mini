@@ -29,7 +29,8 @@ async function sendToCore(payload) {
                 return;
         }
         catch (e) {
-            const errMsg = String(e?.message ?? e?.cause ?? '');
+            const err = e;
+            const errMsg = [err?.message, String(err?.cause ?? ''), String(e)].join(' ');
             const isRefused = errMsg.includes('ECONNREFUSED');
             if (attempt === maxRetries - 1) {
                 console.error('Failed to send to core:', e);

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -163,6 +164,13 @@ func isValidTaskID(id string) bool {
 
 // isAllowedSender returns true if from is allowed (empty allow_from = allow all).
 // Normalizes WhatsApp IDs: Baileys sends "123@s.whatsapp.net", config may use "+123".
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
 func isAllowedSender(from string, allowFrom []string) bool {
 	if len(allowFrom) == 0 {
 		return true
@@ -318,6 +326,7 @@ func gatewayCmd(args []string, safeMode bool) {
 		}
 		// Enforce allow_from: drop messages from non-allowed senders (silent)
 		if !isAllowedSender(payload.From, cfg.Channels.WhatsApp.AllowFrom) {
+			log.Printf("[gateway] inbound dropped: from=%q not in allow_from", payload.From)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 			return
@@ -331,6 +340,7 @@ func gatewayCmd(args []string, safeMode bool) {
 		if chatID == "" {
 			chatID = payload.From
 		}
+		log.Printf("[gateway] inbound from=%q content=%q", payload.From, truncateForLog(content, 60))
 		msgBus.PublishInbound(bus.InboundMessage{
 			Channel:  "whatsapp",
 			ChatID:   chatID,
