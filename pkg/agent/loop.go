@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -161,6 +162,8 @@ func (l *Loop) Run(ctx context.Context) error {
 					ChatID:  msg.ChatID,
 					Content: response,
 				})
+			} else if msg.Channel == "whatsapp" {
+				log.Printf("[gateway] agent produced no response for from=%q content=%q (check allow_from, LLM provider)", msg.SenderID, utils.Truncate(msg.Content, 40))
 			}
 		}
 	}

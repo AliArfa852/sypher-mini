@@ -67,6 +67,7 @@ func (w *WhatsAppBaileysClient) Run(ctx context.Context) error {
 		if out.Channel != "whatsapp" {
 			continue
 		}
+		log.Printf("[gateway] outbound to=%q content=%q", out.ChatID, utils.Truncate(out.Content, 60))
 		if err := w.sendWithRateLimit(ctx, out.ChatID, out.Content); err != nil {
 			log.Printf("WhatsApp Baileys send error: %v", err)
 		}
@@ -98,8 +99,8 @@ func (w *WhatsAppBaileysClient) send(to, content string) error {
 	if to == "" || content == "" {
 		return nil
 	}
-	// Normalize to JID format when config uses +123; Baileys expects number@s.whatsapp.net
-	if to != "broadcast" {
+	// Preserve LID format (e.g. 60838547296357@lid) for LID chats; convert +123 to JID otherwise
+	if to != "broadcast" && !strings.Contains(to, "@lid") {
 		if jid := utils.ToWhatsAppJID(to); jid != "" {
 			to = jid
 		}

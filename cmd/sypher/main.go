@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -396,7 +397,21 @@ func gatewayCmd(args []string, safeMode bool) {
 				_ = baileysClient.Run(ctx)
 			}()
 			// Optionally spawn extension subprocess
-			if extProc := channels.SpawnBaileysExtension(baileysURL, "http://localhost:18790/inbound"); extProc != nil {
+			// Extension runs locally; use 127.0.0.1 for callback even when gateway binds 0.0.0.0
+			callbackHost := "127.0.0.1"
+			callbackPort := "18790"
+			if addr != "" {
+				if h, p, err := net.SplitHostPort(addr); err == nil {
+					if h != "" && h != "0.0.0.0" {
+						callbackHost = h
+					}
+					if p != "" {
+						callbackPort = p
+					}
+				}
+			}
+			callbackURL := "http://" + callbackHost + ":" + callbackPort + "/inbound"
+			if extProc := channels.SpawnBaileysExtension(baileysURL, callbackURL); extProc != nil {
 				go func() {
 					_ = extProc.Wait()
 				}()
