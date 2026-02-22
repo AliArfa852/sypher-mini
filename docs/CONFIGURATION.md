@@ -173,6 +173,31 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 | `allow_git_push` | bool | `false` | Allow `git push` and `git force` (use only in trusted environments) |
 | `allow_dirs` | []string | `[]` | Additional directories allowed for `working_dir` outside workspace (e.g. `E:\demo`) |
 
+### tools.live_monitoring
+
+**Required for `stream_command` tool.** If `allowed_commands` is empty or missing, the stream_command tool will reject all commands.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowed_commands` | []string | `[]` | Commands allowed for live streaming. Use prefix match (e.g. `npm run`, `go run`, `tail -f`, `gemini`). Example: `["npm run", "go run", "tail -f", "gemini"]` |
+
+### invoke_cli_agent tool
+
+The `invoke_cli_agent` tool requires at least one agent in `agents.list` with `command` and `args` configured. Without this, the tool returns "No CLI agent configured."
+
+Example for Gemini CLI:
+
+```json
+{
+  "agents": {
+    "list": [
+      { "id": "main", "default": true },
+      { "id": "gemini-cli", "command": "gemini", "args": ["--model", "gemini-2.0"] }
+    ]
+  }
+}
+```
+
 ### audit
 
 | Field | Type | Default | Description |
@@ -223,6 +248,12 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mode` | string | `local_dev` | `local_dev` \| `headless_server` \| `container` \| `multi_user` |
+
+---
+
+## Menus (config/menus.json or ~/.sypher-mini/menus.json)
+
+Menu JSON keys must be **lowercase** for correct unmarshaling. Use `"title"`, `"items"`, `"id"`, `"label"`, `"action"`, `"submenu"` (not `Title`, `Items`, etc.).
 
 ---
 

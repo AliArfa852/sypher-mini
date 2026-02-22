@@ -25,6 +25,7 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/extensions"
 	"github.com/sypherexx/sypher-mini/pkg/monitor"
 	"github.com/sypherexx/sypher-mini/pkg/observability"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 var version = "dev"
@@ -161,12 +162,17 @@ func isValidTaskID(id string) bool {
 }
 
 // isAllowedSender returns true if from is allowed (empty allow_from = allow all).
+// Normalizes WhatsApp IDs: Baileys sends "123@s.whatsapp.net", config may use "+123".
 func isAllowedSender(from string, allowFrom []string) bool {
 	if len(allowFrom) == 0 {
 		return true
 	}
+	fromNorm := utils.NormalizeWhatsAppID(from)
+	if fromNorm == "" {
+		return false
+	}
 	for _, a := range allowFrom {
-		if a == from {
+		if a == from || utils.NormalizeWhatsAppID(a) == fromNorm {
 			return true
 		}
 	}
@@ -359,7 +365,11 @@ func gatewayCmd(args []string, safeMode bool) {
 			if baileysURL == "" {
 				baileysURL = "http://localhost:3002"
 			}
-			baileysClient := channels.NewWhatsAppBaileysClient(baileysURL, msgBus)
+			minInterval := cfg.Channels.WhatsApp.MinIntervalSec
+			if minInterval <= 0 {
+				minInterval = 12
+			}
+			baileysClient := channels.NewWhatsAppBaileysClient(baileysURL, msgBus, minInterval)
 			go func() {
 				_ = baileysClient.Run(ctx)
 			}()
@@ -389,7 +399,10 @@ func gatewayCmd(args []string, safeMode bool) {
 				mon := monitor.NewHTTPMonitor(m, func(monitorID, message string) {
 					chatID := "broadcast"
 					if len(cfg.Channels.WhatsApp.AllowFrom) > 0 {
-						chatID = cfg.Channels.WhatsApp.AllowFrom[0]
+						chatID = utils.ToWhatsAppJID(cfg.Channels.WhatsApp.AllowFrom[0])
+					}
+					if chatID == "" {
+						chatID = "broadcast"
 					}
 					msgBus.PublishOutbound(bus.OutboundMessage{
 						Channel: "whatsapp",
@@ -477,7 +490,12 @@ func getConfigPath(cfg *config.Config, path []string) interface{} {
 		if path[1] == "list" && len(path) == 2 {
 			return cfg.Agents.List
 		}
-	case "task", "timeout_sec":
+	case "task":
+		if len(path) >= 2 && path[1] == "timeout_sec" {
+			return cfg.Task.TimeoutSec
+		}
+		return cfg.Task
+	case "timeout_sec":
 		return cfg.Task.TimeoutSec
 	case "channels":
 		return cfg.Channels

@@ -9,9 +9,12 @@ const defaultSessionTTL = 10 * time.Minute
 
 // Session holds menu state for a chat.
 type Session struct {
-	CurrentMenu string
-	ParentMenu  string
-	LastActive  time.Time
+	CurrentMenu       string
+	ParentMenu        string
+	LastActive        time.Time
+	PendingAction     string   // e.g. "projects_build", "projects_pull", "tasks_cancel"
+	PendingProjectIDs []string // project IDs for selection (1-indexed)
+	PendingTaskIDs    []string // task IDs for cancel selection (1-indexed)
 }
 
 // SessionStore holds per-chat menu sessions.
@@ -79,4 +82,73 @@ func (s *SessionStore) Clear(key string) {
 // ResetToMain sets session to main menu.
 func (s *SessionStore) ResetToMain(key string) {
 	s.Set(key, "main", "")
+}
+
+// SetPendingProjectAction sets state for project selection (build/pull).
+// Creates session if it does not exist.
+func (s *SessionStore) SetPendingProjectAction(key, action string, projectIDs []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if ses, ok := s.sessions[key]; ok && ses != nil {
+		ses.PendingAction = action
+		ses.PendingProjectIDs = projectIDs
+		ses.PendingTaskIDs = nil
+		ses.LastActive = now
+	} else {
+		s.sessions[key] = &Session{
+			CurrentMenu:       "projects",
+			ParentMenu:        "main",
+			LastActive:        now,
+			PendingAction:     action,
+			PendingProjectIDs: projectIDs,
+		}
+	}
+}
+
+// SetPendingTaskCancel sets state for task cancel selection.
+// Creates session if it does not exist.
+func (s *SessionStore) SetPendingTaskCancel(key string, taskIDs []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if ses, ok := s.sessions[key]; ok && ses != nil {
+		ses.PendingAction = "tasks_cancel"
+		ses.PendingProjectIDs = nil
+		ses.PendingTaskIDs = taskIDs
+		ses.LastActive = now
+	} else {
+		s.sessions[key] = &Session{
+			CurrentMenu:    "tasks",
+			ParentMenu:     "main",
+			LastActive:     now,
+			PendingAction:  "tasks_cancel",
+			PendingTaskIDs: taskIDs,
+		}
+	}
+}
+
+// GetPendingProjectAction returns (action, projectIDs, taskIDs, ok).
+func (s *SessionStore) GetPendingProjectAction(key string) (string, []string, []string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ses, ok := s.sessions[key]
+	if !ok || ses == nil || ses.PendingAction == "" {
+		return "", nil, nil, false
+	}
+	if time.Since(ses.LastActive) > s.ttl {
+		return "", nil, nil, false
+	}
+	return ses.PendingAction, ses.PendingProjectIDs, ses.PendingTaskIDs, true
+}
+
+// ClearPendingProjectAction clears the pending state.
+func (s *SessionStore) ClearPendingProjectAction(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ses, ok := s.sessions[key]; ok && ses != nil {
+		ses.PendingAction = ""
+		ses.PendingProjectIDs = nil
+		ses.PendingTaskIDs = nil
+	}
 }

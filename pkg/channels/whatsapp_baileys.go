@@ -17,35 +17,43 @@ import (
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/extensions"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 const (
-	whatsAppMinInterval = 12 * time.Second
+	defaultWhatsAppMinInterval = 12 * time.Second
 )
 
 // WhatsAppBaileysClient relays outbound messages to the Baileys extension via HTTP.
 // Inbound: extension POSTs to gateway /inbound (handled by main).
 // Outbound: this client subscribes to msgBus and POSTs to extension /send.
-// Per-chat rate limit: min 12s between messages to avoid spam.
+// Per-chat rate limit: min Ns between messages to avoid spam (configurable).
 type WhatsAppBaileysClient struct {
-	baileysURL   string
-	msgBus       *bus.MessageBus
-	httpClient   *http.Client
-	lastSent     map[string]time.Time
-	lastSentMu   sync.Mutex
+	baileysURL     string
+	msgBus         *bus.MessageBus
+	httpClient     *http.Client
+	lastSent       map[string]time.Time
+	lastSentMu     sync.Mutex
+	minInterval    time.Duration
 }
 
 // NewWhatsAppBaileysClient creates a Baileys outbound client.
-func NewWhatsAppBaileysClient(baileysURL string, msgBus *bus.MessageBus) *WhatsAppBaileysClient {
+// minIntervalSec: 0 = use default 12s.
+func NewWhatsAppBaileysClient(baileysURL string, msgBus *bus.MessageBus, minIntervalSec int) *WhatsAppBaileysClient {
 	url := strings.TrimRight(baileysURL, "/")
 	if url == "" {
 		url = "http://localhost:3002"
 	}
+	interval := defaultWhatsAppMinInterval
+	if minIntervalSec > 0 {
+		interval = time.Duration(minIntervalSec) * time.Second
+	}
 	return &WhatsAppBaileysClient{
-		baileysURL: url,
-		msgBus:     msgBus,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		lastSent:   make(map[string]time.Time),
+		baileysURL:  url,
+		msgBus:      msgBus,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		lastSent:    make(map[string]time.Time),
+		minInterval: interval,
 	}
 }
 
@@ -70,7 +78,7 @@ func (w *WhatsAppBaileysClient) sendWithRateLimit(ctx context.Context, to, conte
 	w.lastSentMu.Lock()
 	last := w.lastSent[to]
 	w.lastSentMu.Unlock()
-	if wait := whatsAppMinInterval - time.Since(last); wait > 0 {
+	if wait := w.minInterval - time.Since(last); wait > 0 {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -89,6 +97,12 @@ func (w *WhatsAppBaileysClient) sendWithRateLimit(ctx context.Context, to, conte
 func (w *WhatsAppBaileysClient) send(to, content string) error {
 	if to == "" || content == "" {
 		return nil
+	}
+	// Normalize to JID format when config uses +123; Baileys expects number@s.whatsapp.net
+	if to != "broadcast" {
+		if jid := utils.ToWhatsAppJID(to); jid != "" {
+			to = jid
+		}
 	}
 	payload := map[string]string{"to": to, "content": content}
 	data, err := json.Marshal(payload)

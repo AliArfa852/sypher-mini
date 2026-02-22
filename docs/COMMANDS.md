@@ -71,6 +71,8 @@ go clean -cache                   # Clean Go cache
 | `cli <N> [--tail N]` | Show last N lines of terminal (default 10, max 100) |
 | `cli run <N> <cmd>` | Run command in terminal N |
 
+**Commands vs CLI Sessions:** These are different concepts. **Commands** (`sypher commands list`) are custom configs in `~/.sypher-mini/commands/*.json` used by the `invoke_cli_agent` tool. **CLI Sessions** (`/cli list`) are terminal sessions you create via the menu or `/cli new`; they persist across gateway restarts in `~/.sypher-mini/cli-sessions/`.
+
 ---
 
 ## Command Details

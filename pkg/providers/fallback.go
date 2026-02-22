@@ -15,6 +15,9 @@ import (
 // retryAfterRegex parses "retry in X.XXXs" or "retry in Xs" from API error bodies.
 var retryAfterRegex = regexp.MustCompile(`[Rr]etry in (\d+(?:\.\d+)?)s`)
 
+// retryAfterJSONRegex parses "retry_after": N or "retryAfter": N from JSON error bodies.
+var retryAfterJSONRegex = regexp.MustCompile(`"(?:retry_after|retryAfter)"\s*:\s*(\d+(?:\.\d+)?)`)
+
 // llmRateLimiter limits API calls per sliding window (e.g. 2 per 15 sec).
 type llmRateLimiter struct {
 	mu     sync.Mutex
@@ -67,12 +70,71 @@ func (r *llmRateLimiter) wait(ctx context.Context) error {
 	}
 }
 
+// circuitBreaker backs off after consecutive 429 errors.
+type circuitBreaker struct {
+	mu             sync.Mutex
+	consecutive429 int
+	trippedUntil   time.Time
+}
+
+func (c *circuitBreaker) record429() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.consecutive429++
+	if c.consecutive429 >= 2 && c.trippedUntil.IsZero() {
+		backoff := 60 * time.Second
+		if c.consecutive429 >= 3 {
+			backoff = 120 * time.Second
+		}
+		c.trippedUntil = time.Now().Add(backoff)
+	}
+}
+
+func (c *circuitBreaker) recordSuccess() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.consecutive429 = 0
+	c.trippedUntil = time.Time{}
+}
+
+func (c *circuitBreaker) wait(ctx context.Context) error {
+	c.mu.Lock()
+	until := c.trippedUntil
+	c.mu.Unlock()
+	if until.IsZero() {
+		return nil
+	}
+	waitDur := time.Until(until)
+	if waitDur <= 0 {
+		c.mu.Lock()
+		c.trippedUntil = time.Time{}
+		c.mu.Unlock()
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(waitDur):
+	}
+	c.mu.Lock()
+	c.trippedUntil = time.Time{}
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *circuitBreaker) isTripped() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.trippedUntil.IsZero() && time.Now().Before(c.trippedUntil)
+}
+
 // FallbackProvider tries providers in order with retries.
 type FallbackProvider struct {
-	entries    []ProviderEntry
-	retryMax   int
-	retryBase  time.Duration
-	rateLimit  *llmRateLimiter
+	entries       []ProviderEntry
+	retryMax      int
+	retryBase     time.Duration
+	rateLimit     *llmRateLimiter
+	circuitBreaker *circuitBreaker
 }
 
 // NewFallbackProvider creates a provider that falls back on failure.
@@ -90,10 +152,11 @@ func NewFallbackProvider(cfg *config.Config) *FallbackProvider {
 		}
 	}
 	return &FallbackProvider{
-		entries:   NewProviderWithFallbacks(cfg),
-		retryMax:  retryMax,
-		retryBase: time.Second,
-		rateLimit: rl,
+		entries:        NewProviderWithFallbacks(cfg),
+		retryMax:       retryMax,
+		retryBase:      time.Second,
+		rateLimit:      rl,
+		circuitBreaker: &circuitBreaker{},
 	}
 }
 
@@ -112,18 +175,28 @@ func is429(err error) bool {
 }
 
 // parseRetryAfter extracts suggested wait time in seconds from error body.
+// Handles "retry in Xs", JSON "retry_after": N, and "retryAfter": N.
 func parseRetryAfter(err error) time.Duration {
 	if err == nil {
 		return 0
 	}
-	m := retryAfterRegex.FindStringSubmatch(err.Error())
-	if len(m) < 2 {
-		return 0
+	s := err.Error()
+	// Try "retry in Xs" format first
+	if m := retryAfterRegex.FindStringSubmatch(s); len(m) >= 2 {
+		if sec, _ := strconv.ParseFloat(m[1], 64); sec > 0 {
+			return clampRetryDuration(sec)
+		}
 	}
-	sec, _ := strconv.ParseFloat(m[1], 64)
-	if sec <= 0 {
-		return 0
+	// Try JSON retry_after / retryAfter
+	if m := retryAfterJSONRegex.FindStringSubmatch(s); len(m) >= 2 {
+		if sec, _ := strconv.ParseFloat(m[1], 64); sec > 0 {
+			return clampRetryDuration(sec)
+		}
 	}
+	return 0
+}
+
+func clampRetryDuration(sec float64) time.Duration {
 	d := time.Duration(sec * float64(time.Second))
 	if d < time.Second {
 		d = time.Second
@@ -141,6 +214,12 @@ func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools [
 		if e.Provider == nil {
 			continue
 		}
+		// Circuit breaker: wait if we've had 2+ consecutive 429s
+		if f.circuitBreaker != nil && f.circuitBreaker.isTripped() {
+			if err := f.circuitBreaker.wait(ctx); err != nil {
+				return nil, err
+			}
+		}
 		maxAttempts := f.retryMax + 1
 		for attempt := 0; attempt < maxAttempts; attempt++ {
 			if f.rateLimit != nil {
@@ -154,6 +233,7 @@ func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools [
 					backoff = 30 * time.Second
 				}
 				if is429(lastErr) {
+					f.circuitBreaker.record429()
 					if parsed := parseRetryAfter(lastErr); parsed > 0 {
 						backoff = parsed
 					} else {
@@ -172,9 +252,13 @@ func (f *FallbackProvider) Chat(ctx context.Context, messages []Message, tools [
 			}
 			resp, err := e.Provider.Chat(ctx, messages, tools, model, options)
 			if err == nil {
+				f.circuitBreaker.recordSuccess()
 				return resp, nil
 			}
 			lastErr = err
+			if !is429(err) {
+				f.circuitBreaker.recordSuccess()
+			}
 			log.Printf("LLM %s attempt %d failed: %v", e.Name, attempt+1, err)
 		}
 	}

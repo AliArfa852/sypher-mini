@@ -2,6 +2,7 @@ package channels
 
 import (
 	"testing"
+	"time"
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 )
@@ -32,7 +33,7 @@ func TestParsePortFromURL(t *testing.T) {
 
 func TestNewWhatsAppBaileysClient(t *testing.T) {
 	bus := newTestBus()
-	client := NewWhatsAppBaileysClient("http://localhost:3002", bus)
+	client := NewWhatsAppBaileysClient("http://localhost:3002", bus, 0)
 	if client == nil {
 		t.Fatal("NewWhatsAppBaileysClient returned nil")
 	}
@@ -41,15 +42,21 @@ func TestNewWhatsAppBaileysClient(t *testing.T) {
 	}
 
 	// Empty URL defaults to localhost:3002
-	client2 := NewWhatsAppBaileysClient("", bus)
+	client2 := NewWhatsAppBaileysClient("", bus, 0)
 	if client2.baileysURL != "http://localhost:3002" {
 		t.Errorf("empty URL default = %q, want http://localhost:3002", client2.baileysURL)
 	}
 
 	// Trailing slash trimmed
-	client3 := NewWhatsAppBaileysClient("http://localhost:3002/", bus)
+	client3 := NewWhatsAppBaileysClient("http://localhost:3002/", bus, 0)
 	if client3.baileysURL != "http://localhost:3002" {
 		t.Errorf("trailing slash = %q, want http://localhost:3002", client3.baileysURL)
+	}
+
+	// Custom min interval (5 sec)
+	client4 := NewWhatsAppBaileysClient("http://localhost:3002", bus, 5)
+	if client4.minInterval != 5*time.Second {
+		t.Errorf("minInterval = %v, want 5s", client4.minInterval)
 	}
 }
 

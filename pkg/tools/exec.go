@@ -146,6 +146,7 @@ func (t *ExecTool) Execute(ctx context.Context, req Request) Response {
 			"Command is required.",
 			CodePermissionDenied, false)
 	}
+	cmdStr = resolveCommandAlias(strings.TrimSpace(cmdStr))
 	if len(cmdStr) > 32*1024 {
 		return ErrorResponse(req.ToolCallID,
 			"Command too long (max 32KB)",
@@ -242,6 +243,49 @@ func (t *ExecTool) Execute(ctx context.Context, req Request) Response {
 	}
 
 	return SuccessResponse(req.ToolCallID, forLLM, forUser, auditRef)
+}
+
+// resolveCommandAlias maps common commands to platform-appropriate equivalents.
+func resolveCommandAlias(cmd string) string {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return cmd
+	}
+	lower := strings.ToLower(parts[0])
+	rest := strings.TrimSpace(strings.TrimPrefix(cmd, parts[0]))
+	if runtime.GOOS == "windows" {
+		switch lower {
+		case "dir":
+			return cmd
+		case "ls":
+			if strings.Contains(rest, "-a") || strings.Contains(rest, "-la") {
+				return "dir /a " + rest
+			}
+			return "dir " + rest
+		case "top":
+			return "tasklist"
+		case "ps":
+			return "tasklist"
+		}
+	} else {
+		switch lower {
+		case "dir":
+			return "ls -la " + rest
+		case "ls":
+			if rest == "" || rest == "-a" || rest == "-la" || rest == "-l" {
+				return "ls -la"
+			}
+			return cmd
+		case "top":
+			return "top -b -n 1"
+		case "ps":
+			if rest == "" {
+				return "ps aux"
+			}
+			return cmd
+		}
+	}
+	return cmd
 }
 
 // guardWorkspaceAndCommand validates working directory and paths in the command string.

@@ -18,6 +18,7 @@
       { "id": "2", "label": "Open project workspace", "action": "projects_open" },
       { "id": "3", "label": "Run build/test", "action": "projects_build" },
       { "id": "4", "label": "Pull latest repo changes", "action": "projects_pull" },
+      { "id": "5", "label": "Add project", "action": "projects_add" },
       { "id": "0", "label": "Back to main menu", "submenu": "main" }
     ]
   },

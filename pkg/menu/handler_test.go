@@ -69,11 +69,14 @@ func TestHandler_NumericInMenu(t *testing.T) {
 func TestHandler_NumericNoSession(t *testing.T) {
 	h := NewHandler(config.DefaultConfig(), nil, "")
 	ctx := context.Background()
-	// Send 1 without first triggering menu - should not be handled
-	msg := bus.InboundMessage{Channel: "whatsapp", ChatID: "+123", SenderID: "+123", Content: "1"}
-	handled, _ := h.Handle(ctx, msg)
-	if handled {
-		t.Error("numeric without menu session should not be handled")
+	// Send 4 without first triggering menu - now handled as main menu shortcut (4 -> CLI submenu)
+	msg := bus.InboundMessage{Channel: "whatsapp", ChatID: "+123", SenderID: "+123", Content: "4"}
+	handled, resp := h.Handle(ctx, msg)
+	if !handled {
+		t.Error("numeric 1-7 without session should be handled as main menu shortcut")
+	}
+	if !strings.Contains(resp, "CLI") {
+		t.Errorf("4 should show CLI submenu: %s", resp)
 	}
 }
 

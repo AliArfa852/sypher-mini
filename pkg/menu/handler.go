@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
@@ -76,10 +77,73 @@ func (h *Handler) Handle(ctx context.Context, msg bus.InboundMessage) (handled b
 		return true, response
 	}
 
+	// 1b. Single digit 1-7 with no session: treat as main menu shortcut (4 -> CLI, 1 -> Projects, etc.)
+	if ses, ok := h.store.Get(key); !ok || ses == nil {
+		if n, okNum := parseMenuNumber(content); okNum && n >= 1 && n <= 7 {
+			mainMenu, hasMain := h.menus["main"]
+			if hasMain && n <= len(mainMenu.Items) {
+				item := mainMenu.Items[n-1]
+				if item.Submenu != "" {
+					h.store.Set(key, item.Submenu, "main")
+					response = RenderMenu(h.menus, item.Submenu)
+					return true, response
+				}
+				if item.Action != "" {
+					res, err := ExecuteAction(ctx, item.Action, h.cfg, h.runner, msg)
+					if err != nil {
+						response = "Error: " + err.Error()
+					} else {
+						response = res
+						if h.runner != nil {
+							if item.Action == "projects_build" || item.Action == "projects_pull" {
+								if ids, _ := h.runner.RunProjectsGetIDs(ctx); len(ids) > 0 {
+									h.store.SetPendingProjectAction(key, item.Action, ids)
+								}
+							} else if item.Action == "tasks_cancel" {
+								if ids, _ := h.runner.RunTasksGetIDs(ctx); len(ids) > 0 {
+									h.store.SetPendingTaskCancel(key, ids)
+								}
+							}
+						}
+					}
+					h.store.Set(key, "main", "")
+					return true, response
+				}
+			}
+		}
+	}
+
 	// 2. Numeric input when in menu session
 	if ses, ok := h.store.Get(key); ok && ses != nil {
+		// Check pending selection first (build/pull/cancel)
+		if action, projectIDs, taskIDs, ok := h.store.GetPendingProjectAction(key); ok && h.runner != nil {
+			if n, okNum := parseMenuNumber(content); okNum && n >= 1 {
+				h.store.ClearPendingProjectAction(key)
+				var res string
+				var err error
+				if action == "projects_build" && n <= len(projectIDs) {
+					res, err = h.runner.RunProjectsBuild(ctx, projectIDs[n-1], msg)
+				} else if action == "projects_pull" && n <= len(projectIDs) {
+					res, err = h.runner.RunProjectsPull(ctx, projectIDs[n-1], msg)
+				} else if action == "tasks_cancel" && n <= len(taskIDs) {
+					res, err = h.runner.RunTasksCancel(ctx, taskIDs[n-1], msg)
+				} else {
+					h.store.Set(key, ses.CurrentMenu, ses.ParentMenu)
+					return false, ""
+				}
+				if err != nil {
+					response = "Error: " + err.Error()
+				} else {
+					response = res
+				}
+				h.store.Set(key, ses.CurrentMenu, ses.ParentMenu)
+				return true, response
+			}
+		}
+
 		// 0 or "back" -> parent or main
 		if lower == "0" || lower == "back" {
+			h.store.ClearPendingProjectAction(key)
 			parent := ses.ParentMenu
 			if parent == "" {
 				parent = "main"
@@ -110,6 +174,18 @@ func (h *Handler) Handle(ctx context.Context, msg bus.InboundMessage) (handled b
 						response = "Error: " + err.Error()
 					} else {
 						response = res
+						// Set pending state for project build/pull or task cancel (user will reply with number)
+						if h.runner != nil {
+							if item.Action == "projects_build" || item.Action == "projects_pull" {
+								if ids, _ := h.runner.RunProjectsGetIDs(ctx); len(ids) > 0 {
+									h.store.SetPendingProjectAction(key, item.Action, ids)
+								}
+							} else if item.Action == "tasks_cancel" {
+								if ids, _ := h.runner.RunTasksGetIDs(ctx); len(ids) > 0 {
+									h.store.SetPendingTaskCancel(key, ids)
+								}
+							}
+						}
 					}
 					// Stay in same menu
 					h.store.Set(key, ses.CurrentMenu, ses.ParentMenu)
@@ -122,4 +198,13 @@ func (h *Handler) Handle(ctx context.Context, msg bus.InboundMessage) (handled b
 	}
 
 	return false, ""
+}
+
+// parseMenuNumber returns (n, true) if content is a positive number.
+func parseMenuNumber(content string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(content))
+	if err != nil {
+		return 0, false
+	}
+	return n, n >= 1
 }

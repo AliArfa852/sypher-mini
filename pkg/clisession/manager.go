@@ -22,9 +22,10 @@ type Session struct {
 
 // Manager stores active CLI sessions.
 type Manager struct {
-	sessions map[int]*Session
-	nextID   int
-	mu       sync.RWMutex
+	sessions    map[int]*Session
+	nextID      int
+	mu          sync.RWMutex
+	persistPath string // if set, Persist() saves to this path
 }
 
 // NewManager creates a new CLI session manager.
@@ -49,6 +50,9 @@ func (m *Manager) New(tag string) *Session {
 		Output:      newRingBuffer(MaxTailLines),
 	}
 	m.sessions[id] = s
+	if m.persistPath != "" {
+		go m.Persist()
+	}
 	return s
 }
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -21,8 +22,11 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/tools"
 	"github.com/sypherexx/sypher-mini/pkg/policy"
 	"github.com/sypherexx/sypher-mini/pkg/menu"
+	"github.com/sypherexx/sypher-mini/pkg/commands"
 	"github.com/sypherexx/sypher-mini/pkg/platform"
+	"github.com/sypherexx/sypher-mini/pkg/project"
 	"github.com/sypherexx/sypher-mini/pkg/replay"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 // Loop is the main agent loop that processes inbound messages.
@@ -49,6 +53,7 @@ type Loop struct {
 	safeMode      bool
 	running       atomic.Bool
 	menuHandler   *menu.Handler
+	projectStore  *project.Store
 }
 
 // LoopOptions configures the agent loop.
@@ -86,7 +91,7 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	tailOutput := tools.NewTailOutputTool(cfg, opts.SafeMode)
 	streamCommand := tools.NewStreamCommandTool(cfg, msgBus, messageTool, opts.SafeMode)
 	invokeCliAgent := tools.NewInvokeCliAgentTool(cfg, opts.SafeMode)
-	cliManager := clisession.NewManager()
+	cliManager := clisession.NewManagerWithPersistence("")
 	replayWriter := replay.NewWriter(cfg)
 	metrics := observability.NewMetrics()
 
@@ -121,6 +126,11 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		policyEval:  policyEval,
 		safeMode:    opts.SafeMode,
 	}
+	workspace := config.ExpandPath(cfg.Agents.Defaults.Workspace)
+	if workspace == "" {
+		workspace = config.ExpandPath("~/.sypher-mini/workspace")
+	}
+	l.projectStore = project.NewStore(workspace)
 	l.menuHandler = menu.NewHandler(cfg, l, "")
 	return l
 }
@@ -274,8 +284,9 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 		allowFrom := l.cfg.Channels.WhatsApp.AllowFrom
 		if len(allowFrom) > 0 {
 			allowed := false
+			senderNorm := utils.NormalizeWhatsAppID(msg.SenderID)
 			for _, a := range allowFrom {
-				if a == msg.SenderID {
+				if a == msg.SenderID || (senderNorm != "" && utils.NormalizeWhatsAppID(a) == senderNorm) {
 					allowed = true
 					break
 				}
@@ -386,10 +397,23 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			maxIter = 20
 		}
 
+		minInterval := l.cfg.Providers.LLMRateLimit.MinIntervalSec
+		if !l.cfg.Providers.PaidTier && minInterval <= 0 {
+			minInterval = 3
+		}
 		for iter := 0; iter < maxIter; iter++ {
 			if t.IsCancelled() {
 				t.Transition(task.StateKilled)
 				return context.Canceled
+			}
+
+			// Inter-iteration delay: space out LLM calls to avoid rate limits (skip first iteration)
+			if iter > 0 && minInterval > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(minInterval) * time.Second):
+				}
 			}
 
 			// Context summarization: truncate when over threshold (rough: 4 chars = 1 token)
@@ -635,6 +659,7 @@ func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.Inbo
 			output = "Error: " + output
 		}
 		s.Append(output)
+		l.cliManager.Persist()
 		return output, nil
 	case "list":
 		sessions := l.cliManager.List()
@@ -728,6 +753,164 @@ func (l *Loop) RunConfigStatus(ctx context.Context, msg bus.InboundMessage) (str
 	return fmt.Sprintf("*Config*\nModel: %s\n\n%s\n\n*Agents*\n%s", model, status, agents), nil
 }
 
+// RunProjectsList implements menu.ActionRunner.
+func (l *Loop) RunProjectsList(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error listing projects: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		scanned := project.ScanWorkspace(l.projectStore.Workspace())
+		if len(scanned) > 0 {
+			return "*Projects (auto-detected)*\n\nAdd JSON files to `workspace/code-projects/` to register. Detected:\n" + formatPaths(scanned, 1), nil
+		}
+		return "*No projects registered.*\n\nAdd JSON files to `~/.sypher-mini/workspace/code-projects/` (e.g. myapp.json) with id, name, path, build_command.", nil
+	}
+	return "*Projects*\n\n" + formatProjects(projects), nil
+}
+
+// RunProjectsBuild implements menu.ActionRunner. When projectID is empty, shows list with instructions.
+func (l *Loop) RunProjectsBuild(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		return "No projects. Add projects to workspace/code-projects/", nil
+	}
+	if projectID != "" {
+		p, err := l.projectStore.Get(projectID)
+		if err != nil || p == nil {
+			return "Project not found: " + projectID, nil
+		}
+		cmd := p.BuildCommand
+		if cmd == "" {
+			cmd = "npm run build"
+		}
+		dir := p.AbsPath(l.cfg.Agents.Defaults.Workspace)
+		req := tools.Request{TaskID: "menu-build", AgentID: "main", Name: "exec", Args: map[string]interface{}{
+			"command":     cmd,
+			"working_dir": dir,
+		}}
+		resp := l.execTool.Execute(ctx, req)
+		if resp.IsError {
+			return "Build failed: " + resp.ForLLM, nil
+		}
+		return "*Build complete*\n\n" + resp.ForLLM, nil
+	}
+	out := "*Select project to build:*\n\n" + formatProjects(projects)
+	out += "\n\n_Reply with number (1-" + fmt.Sprintf("%d", len(projects)) + ") or say 'sypher build <project-id>'. Reply within 10 minutes._"
+	return out, nil
+}
+
+// RunProjectsPull implements menu.ActionRunner.
+func (l *Loop) RunProjectsPull(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		return "No projects.", nil
+	}
+	if projectID != "" {
+		p, err := l.projectStore.Get(projectID)
+		if err != nil || p == nil {
+			return "Project not found: " + projectID, nil
+		}
+		dir := p.AbsPath(l.cfg.Agents.Defaults.Workspace)
+		req := tools.Request{TaskID: "menu-pull", AgentID: "main", Name: "exec", Args: map[string]interface{}{
+			"command":     "git pull",
+			"working_dir": dir,
+		}}
+		resp := l.execTool.Execute(ctx, req)
+		if resp.IsError {
+			return "Pull failed: " + resp.ForLLM, nil
+		}
+		return "*Pull complete*\n\n" + resp.ForLLM, nil
+	}
+	out := "*Select project to pull:*\n\n" + formatProjects(projects)
+	out += "\n\n_Reply with number (1-" + fmt.Sprintf("%d", len(projects)) + ") or say 'sypher pull <project-id>'. Reply within 10 minutes._"
+	return out, nil
+}
+
+func formatProjects(projects []*project.Project) string {
+	var out string
+	for i, p := range projects {
+		out += fmt.Sprintf("%d. *%s* — %s", i+1, p.Name, p.Path)
+		if p.BuildCommand != "" {
+			out += " (build: " + p.BuildCommand + ")"
+		}
+		out += "\n"
+	}
+	return out
+}
+
+func formatPaths(paths []string, start int) string {
+	var out string
+	for i, p := range paths {
+		out += fmt.Sprintf("%d. %s\n", start+i, p)
+	}
+	return out
+}
+
+// RunProjectsGetIDs implements menu.ActionRunner.
+func (l *Loop) RunProjectsGetIDs(ctx context.Context) ([]string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(projects))
+	for i, p := range projects {
+		ids[i] = p.ID
+	}
+	return ids, nil
+}
+
+// RunTasksList implements menu.ActionRunner.
+func (l *Loop) RunTasksList(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	tasks := l.taskMgr.List()
+	if len(tasks) == 0 {
+		return "*No running tasks.*", nil
+	}
+	var out string
+	for _, t := range tasks {
+		out += fmt.Sprintf("• %s — %s (%s)\n", t.ID, t.AgentID, t.GetState())
+	}
+	out += "\n_Use /cancel <task_id> to cancel._"
+	return out, nil
+}
+
+// RunTasksGetIDs implements menu.ActionRunner.
+func (l *Loop) RunTasksGetIDs(ctx context.Context) ([]string, error) {
+	tasks := l.taskMgr.List()
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.ID
+	}
+	return ids, nil
+}
+
+// RunTasksCancel implements menu.ActionRunner. When taskID is empty, shows list.
+func (l *Loop) RunTasksCancel(ctx context.Context, taskID string, msg bus.InboundMessage) (string, error) {
+	if taskID == "" {
+		tasks := l.taskMgr.List()
+		if len(tasks) == 0 {
+			return "*No running tasks to cancel.*", nil
+		}
+		var out string
+		for i, t := range tasks {
+			out += fmt.Sprintf("%d. %s — %s\n", i+1, t.ID, t.AgentID)
+		}
+		out += "\n_Reply with number (1-" + fmt.Sprintf("%d", len(tasks)) + ") to cancel._"
+		return out, nil
+	}
+	ok := l.CancelTask(taskID)
+	if ok {
+		return "*Task " + taskID + " cancelled.*", nil
+	}
+	return "Task not found: " + taskID, nil
+}
+
 // truncateMessages keeps system + recent messages when total tokens exceed threshold.
 // Rough estimate: 4 chars = 1 token.
 func truncateMessages(messages []providers.Message, thresholdTokens int) []providers.Message {
@@ -768,6 +951,18 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 
 	platformCtx := platform.AgentContext()
 
+	// Command registry: projects, slash commands, system commands
+	var projectIDs []string
+	if l.projectStore != nil {
+		if projects, err := l.projectStore.List(); err == nil {
+			for _, p := range projects {
+				projectIDs = append(projectIDs, p.ID)
+			}
+		}
+	}
+	commandsDir := filepath.Join(config.ExpandPath("~/.sypher-mini"), "commands")
+	commandSummary := commands.BuildForAgent(commandsDir, projectIDs)
+
 	toolsSummary := `## Available Tools (use these for actions)
 - exec: Execute shell commands (mkdir, git init, etc.). Use for file ops and running commands.
 - kill: Kill a process by PID (only PIDs from exec).
@@ -792,6 +987,24 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 		parts = append(parts, "You are Sypher, a coding-centric AI assistant.")
 	}
 	parts = append(parts, toolsSummary, platformCtx, hardRules)
+	if commandSummary != "" {
+		parts = append(parts, commandSummary)
+	}
+	if l.cliManager != nil {
+		if sessions := l.cliManager.List(); len(sessions) > 0 {
+			var lines []string
+			lines = append(lines, "## Active CLI Sessions")
+			for _, s := range sessions {
+				ago := "just now"
+				if d := time.Since(s.LastActivity); d > time.Minute {
+					ago = fmt.Sprintf("%.0fm ago", d.Minutes())
+				}
+				lines = append(lines, fmt.Sprintf("- %d: %s (active %s)", s.ID, s.Tag, ago))
+			}
+			lines = append(lines, "Use /cli run <N> <command> to run in a session.")
+			parts = append(parts, strings.Join(lines, "\n"))
+		}
+	}
 	return strings.Join(parts, "\n\n")
 }
 

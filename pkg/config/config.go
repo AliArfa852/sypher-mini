@@ -191,13 +191,14 @@ type ChannelsConfig struct {
 
 // WhatsAppConfig holds WhatsApp channel config.
 type WhatsAppConfig struct {
-	Enabled    bool     `json:"enabled"`
-	BridgeURL  string   `json:"bridge_url"`
-	BaileysURL string   `json:"baileys_url"` // Extension HTTP endpoint, e.g. http://localhost:3002
-	AllowFrom  []string `json:"allow_from"`
-	Operators  []string `json:"operators,omitempty"`
-	Admins     []string `json:"admins,omitempty"`
-	UseBaileys bool     `json:"use_baileys"`
+	Enabled       bool     `json:"enabled"`
+	BridgeURL     string   `json:"bridge_url"`
+	BaileysURL    string   `json:"baileys_url"`    // Extension HTTP endpoint, e.g. http://localhost:3002
+	AllowFrom     []string `json:"allow_from"`
+	Operators     []string `json:"operators,omitempty"`
+	Admins        []string `json:"admins,omitempty"`
+	UseBaileys    bool     `json:"use_baileys"`
+	MinIntervalSec int     `json:"min_interval_sec"` // Min seconds between outbound messages (default 12)
 }
 
 // ProvidersConfig holds LLM provider configs.
@@ -213,8 +214,9 @@ type ProvidersConfig struct {
 
 // LLMRateLimitConfig limits API calls per time window (e.g. 2 per 15 sec).
 type LLMRateLimitConfig struct {
-	MaxPerWindow int `json:"max_per_window"` // max calls allowed in window (default 2)
-	WindowSec    int `json:"window_sec"`     // window duration in seconds (default 15)
+	MaxPerWindow    int `json:"max_per_window"`    // max calls allowed in window (default 2)
+	WindowSec       int `json:"window_sec"`       // window duration in seconds (default 15)
+	MinIntervalSec  int `json:"min_interval_sec"` // min seconds between calls within a task (default 3 when paid_tier false)
 }
 
 // ProviderConfig holds a single provider's config.

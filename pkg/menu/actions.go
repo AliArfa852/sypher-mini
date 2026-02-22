@@ -9,12 +9,19 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/config"
 )
 
-// ActionRunner runs menu actions (CLI, status, etc.). Implemented by agent.Loop.
+// ActionRunner runs menu actions (CLI, status, projects, etc.). Implemented by agent.Loop.
 type ActionRunner interface {
 	RunCliList(ctx context.Context, msg bus.InboundMessage) (string, error)
 	RunCliNew(ctx context.Context, tag string, msg bus.InboundMessage) (string, error)
 	RunStatus(ctx context.Context, msg bus.InboundMessage) (string, error)
 	RunConfigStatus(ctx context.Context, msg bus.InboundMessage) (string, error)
+	RunProjectsList(ctx context.Context, msg bus.InboundMessage) (string, error)
+	RunProjectsBuild(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error)
+	RunProjectsPull(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error)
+	RunProjectsGetIDs(ctx context.Context) ([]string, error)
+	RunTasksList(ctx context.Context, msg bus.InboundMessage) (string, error)
+	RunTasksCancel(ctx context.Context, taskID string, msg bus.InboundMessage) (string, error)
+	RunTasksGetIDs(ctx context.Context) ([]string, error)
 }
 
 // ExecuteAction runs the given action and returns the response.
@@ -45,10 +52,45 @@ Replace X with: cerebras, openai, anthropic, or gemini.`, nil
 3. Add gemini to tools.live_monitoring.allowed_commands`, nil
 	case "help", "help_slash":
 		return helpText(), nil
-	case "projects_list", "projects_open", "projects_build", "projects_pull":
-		return "Say 'sypher' + your request to use the agent for project tasks.", nil
-	case "tasks_create", "tasks_list", "tasks_authorize", "tasks_cancel":
-		return "Say 'sypher' + your request to use the agent for task management.", nil
+	case "projects_list":
+		if runner != nil {
+			return runner.RunProjectsList(ctx, msg)
+		}
+		return "No project runner. Say 'sypher list projects'.", nil
+	case "projects_add":
+		return "*Add project*\n\nCreate a JSON file in:\n~/.sypher-mini/workspace/code-projects/<id>.json\n\nExample:\n" +
+			"{\"id\":\"myapp\",\"name\":\"My App\",\"path\":\"myapp\",\"build_command\":\"npm run build\"}\n\n" +
+			"Path is relative to workspace. Then use \"List active projects\" to see it.", nil
+	case "projects_open":
+		if runner != nil {
+			list, _ := runner.RunProjectsList(ctx, msg)
+			return list + "\n\n_To open: say 'sypher open project-name' or use /cli._", nil
+		}
+		return "Say 'sypher' + your request.", nil
+	case "projects_build":
+		// Empty projectID is intentional: shows list and sets pending for numeric reply
+		if runner != nil {
+			return runner.RunProjectsBuild(ctx, "", msg)
+		}
+		return "Say 'sypher build <project>' for agent.", nil
+	case "projects_pull":
+		// Empty projectID is intentional: shows list and sets pending for numeric reply
+		if runner != nil {
+			return runner.RunProjectsPull(ctx, "", msg)
+		}
+		return "Say 'sypher pull <project>' for agent.", nil
+	case "tasks_list":
+		if runner != nil {
+			return runner.RunTasksList(ctx, msg)
+		}
+		return "Say 'sypher status' for task info.", nil
+	case "tasks_cancel":
+		if runner != nil {
+			return runner.RunTasksCancel(ctx, "", msg)
+		}
+		return "Use /cancel <task_id> or say 'sypher cancel <task_id>'.", nil
+	case "tasks_create", "tasks_authorize":
+		return "Say 'sypher' + your task to create, or 'sypher authorize' for pending tasks.", nil
 	case "logs_tail", "logs_stream":
 		return "Say 'sypher tail <file>' or 'sypher stream <command>' to use the agent.", nil
 	case "cli_list":
@@ -103,8 +145,12 @@ func helpText() string {
 
 *Slash commands:*
 • /status - Status
-• /cli list - List CLI sessions
+• /cli list - List CLI sessions (terminal sessions created via menu or /cli new)
 • /cli new -m "tag" - New session
+• /cli run <N> <command> - Run in session
 • /config get <path> - Get config (operator)
-• /agents - List agents (operator)`
+• /agents - List agents (operator)
+• /cancel <task_id> - Cancel task
+
+*Note:* Commands (sypher commands list) = custom configs for invoke_cli_agent. CLI Sessions (/cli list) = terminal sessions you create.`
 }

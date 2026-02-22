@@ -63,9 +63,10 @@ func DefaultMenus() MenusConfig {
 			Title: "Projects",
 			Items: []MenuItem{
 				{ID: "1", Label: "List active projects", Action: "projects_list"},
-				{ID: "2", Label: "Open project workspace", Action: "projects_open"},
-				{ID: "3", Label: "Run build/test", Action: "projects_build"},
-				{ID: "4", Label: "Pull latest repo changes", Action: "projects_pull"},
+				{ID: "2", Label: "Add project (instructions)", Action: "projects_add"},
+				{ID: "3", Label: "Open project workspace", Action: "projects_open"},
+				{ID: "4", Label: "Run build/test", Action: "projects_build"},
+				{ID: "5", Label: "Pull latest repo changes", Action: "projects_pull"},
 				{ID: "0", Label: "Back to main menu", Submenu: "main"},
 			},
 		},

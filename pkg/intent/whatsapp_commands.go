@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/sypherexx/sypher-mini/pkg/config"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 // WhatsAppTier is the authorization tier for WhatsApp commands.
@@ -114,16 +115,16 @@ func ParseWhatsAppCommand(content string, from string, cfg *config.ChannelsConfi
 }
 
 func resolveTier(from string, allowFrom, operators, admins []string) WhatsAppTier {
-	if !contains(allowFrom, from) && len(allowFrom) > 0 {
+	if len(allowFrom) > 0 && !containsNormalized(allowFrom, from) {
 		return ""
 	}
 	if len(allowFrom) == 0 {
 		// No allow list = allow all as user
 	}
-	if contains(admins, from) {
+	if containsNormalized(admins, from) || contains(admins, from) {
 		return TierAdmin
 	}
-	if contains(operators, from) {
+	if containsNormalized(operators, from) || contains(operators, from) {
 		return TierOperator
 	}
 	return TierUser
@@ -132,6 +133,20 @@ func resolveTier(from string, allowFrom, operators, admins []string) WhatsAppTie
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// containsNormalized checks if v matches any entry when both are normalized (WhatsApp JID vs +123).
+func containsNormalized(list []string, v string) bool {
+	vNorm := utils.NormalizeWhatsAppID(v)
+	if vNorm == "" {
+		return false
+	}
+	for _, x := range list {
+		if utils.NormalizeWhatsAppID(x) == vNorm {
 			return true
 		}
 	}

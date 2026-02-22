@@ -4,6 +4,44 @@ import (
 	"testing"
 )
 
+func TestNormalizeWhatsAppID(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"1234567890@s.whatsapp.net", "1234567890"},
+		{"+1234567890", "1234567890"},
+		{"1234567890", "1234567890"},
+		{"+1 234 567 890", "1234567890"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := NormalizeWhatsAppID(tt.in)
+		if got != tt.want {
+			t.Errorf("NormalizeWhatsAppID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestToWhatsAppJID(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"+1234567890", "1234567890@s.whatsapp.net"},
+		{"1234567890", "1234567890@s.whatsapp.net"},
+		{"1234567890@s.whatsapp.net", "1234567890@s.whatsapp.net"},
+		{"", ""},
+		{"broadcast", ""},
+	}
+	for _, tt := range tests {
+		got := ToWhatsAppJID(tt.in)
+		if got != tt.want {
+			t.Errorf("ToWhatsAppJID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	tests := []struct {
 		s      string
