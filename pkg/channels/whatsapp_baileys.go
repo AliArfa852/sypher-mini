@@ -17,35 +17,43 @@ import (
 
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/extensions"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 const (
-	whatsAppMinInterval = 12 * time.Second
+	defaultWhatsAppMinInterval = 12 * time.Second
 )
 
 // WhatsAppBaileysClient relays outbound messages to the Baileys extension via HTTP.
 // Inbound: extension POSTs to gateway /inbound (handled by main).
 // Outbound: this client subscribes to msgBus and POSTs to extension /send.
-// Per-chat rate limit: min 12s between messages to avoid spam.
+// Per-chat rate limit: min Ns between messages to avoid spam (configurable).
 type WhatsAppBaileysClient struct {
-	baileysURL   string
-	msgBus       *bus.MessageBus
-	httpClient   *http.Client
-	lastSent     map[string]time.Time
-	lastSentMu   sync.Mutex
+	baileysURL     string
+	msgBus         *bus.MessageBus
+	httpClient     *http.Client
+	lastSent       map[string]time.Time
+	lastSentMu     sync.Mutex
+	minInterval    time.Duration
 }
 
 // NewWhatsAppBaileysClient creates a Baileys outbound client.
-func NewWhatsAppBaileysClient(baileysURL string, msgBus *bus.MessageBus) *WhatsAppBaileysClient {
+// minIntervalSec: 0 = use default 12s.
+func NewWhatsAppBaileysClient(baileysURL string, msgBus *bus.MessageBus, minIntervalSec int) *WhatsAppBaileysClient {
 	url := strings.TrimRight(baileysURL, "/")
 	if url == "" {
 		url = "http://localhost:3002"
 	}
+	interval := defaultWhatsAppMinInterval
+	if minIntervalSec > 0 {
+		interval = time.Duration(minIntervalSec) * time.Second
+	}
 	return &WhatsAppBaileysClient{
-		baileysURL: url,
-		msgBus:     msgBus,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		lastSent:   make(map[string]time.Time),
+		baileysURL:  url,
+		msgBus:      msgBus,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		lastSent:    make(map[string]time.Time),
+		minInterval: interval,
 	}
 }
 
@@ -59,6 +67,7 @@ func (w *WhatsAppBaileysClient) Run(ctx context.Context) error {
 		if out.Channel != "whatsapp" {
 			continue
 		}
+		log.Printf("[gateway] outbound to=%q content=%q", out.ChatID, utils.Truncate(out.Content, 60))
 		if err := w.sendWithRateLimit(ctx, out.ChatID, out.Content); err != nil {
 			log.Printf("WhatsApp Baileys send error: %v", err)
 		}
@@ -70,7 +79,7 @@ func (w *WhatsAppBaileysClient) sendWithRateLimit(ctx context.Context, to, conte
 	w.lastSentMu.Lock()
 	last := w.lastSent[to]
 	w.lastSentMu.Unlock()
-	if wait := whatsAppMinInterval - time.Since(last); wait > 0 {
+	if wait := w.minInterval - time.Since(last); wait > 0 {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -89,6 +98,12 @@ func (w *WhatsAppBaileysClient) sendWithRateLimit(ctx context.Context, to, conte
 func (w *WhatsAppBaileysClient) send(to, content string) error {
 	if to == "" || content == "" {
 		return nil
+	}
+	// Preserve LID format (e.g. 60838547296357@lid) for LID chats; convert +123 to JID otherwise
+	if to != "broadcast" && !strings.Contains(to, "@lid") {
+		if jid := utils.ToWhatsAppJID(to); jid != "" {
+			to = jid
+		}
 	}
 	payload := map[string]string{"to": to, "content": content}
 	data, err := json.Marshal(payload)
@@ -119,26 +134,47 @@ func SpawnBaileysExtension(baileysURL, coreCallback string) *exec.Cmd {
 	if err != nil {
 		return nil
 	}
-	var extDir string
+	var ext extensions.DiscoveredExtension
 	for _, e := range exts {
 		if e.Manifest.ID == "whatsapp-baileys" {
-			extDir = e.Dir
+			ext = e
 			break
 		}
 	}
-	if extDir == "" {
-		// Try common paths
-		for _, d := range []string{"extensions/whatsapp-baileys", "extensions\\whatsapp-baileys"} {
-			if abs, _ := filepath.Abs(d); abs != "" {
+	if ext.Dir == "" {
+		// Try common paths (cwd-relative and ~/sypher-mini when run from home)
+		fallbacks := []string{"extensions/whatsapp-baileys", "extensions\\whatsapp-baileys"}
+		if home, err := os.UserHomeDir(); err == nil {
+			fallbacks = append(fallbacks, filepath.Join(home, "sypher-mini", "extensions", "whatsapp-baileys"))
+		}
+		for _, d := range fallbacks {
+			abs := d
+			if !filepath.IsAbs(d) {
+				abs, _ = filepath.Abs(d)
+			}
+			if abs != "" {
 				if st, err := os.Stat(abs); err == nil && st.IsDir() {
-					extDir = abs
+					ext.Dir = abs
+					ext.Manifest = extensions.Manifest{Entry: "dist/index.js", NodeMin: "20"}
+					if data, err := os.ReadFile(filepath.Join(abs, "sypher.extension.json")); err == nil {
+						_ = json.Unmarshal(data, &ext.Manifest)
+					}
 					break
 				}
 			}
 		}
 	}
-	if extDir == "" {
+	if ext.Dir == "" {
 		return nil
+	}
+
+	// Check Node version if manifest specifies minimum
+	if minVer := ext.Manifest.NodeMin; minVer != "" {
+		if !extensions.CheckNodeVersion(minVer) {
+			out, _ := exec.Command("node", "-v").Output()
+			log.Printf("WhatsApp Baileys requires Node.js %s+. Current: %s Upgrade: https://nodejs.org/", minVer, strings.TrimSpace(string(out)))
+			return nil
+		}
 	}
 
 	port := "3002"
@@ -150,35 +186,45 @@ func SpawnBaileysExtension(baileysURL, coreCallback string) *exec.Cmd {
 		"PORT="+port,
 	)
 
-	entryPath := filepath.Join(extDir, "dist", "index.js")
-	nodeModules := filepath.Join(extDir, "node_modules")
+	entryPath := filepath.Join(ext.Dir, "dist", "index.js")
 	if _, err := os.Stat(entryPath); err != nil {
-		// Ensure deps installed
-		if _, err := os.Stat(nodeModules); os.IsNotExist(err) {
-			install := exec.Command("npm", "install")
-			install.Dir = extDir
-			install.Stdout = os.Stdout
-			install.Stderr = os.Stderr
-			if install.Run() != nil {
-				log.Printf("Baileys extension: npm install failed")
+		if ext.Manifest.Setup != "" {
+			if !extensions.RunSetup(ext.Dir, ext.Manifest) {
 				return nil
 			}
-		}
-		// dist not built: run npm run build
-		build := exec.Command("npm", "run", "build")
-		build.Dir = extDir
-		build.Stdout = os.Stdout
-		build.Stderr = os.Stderr
-		if build.Run() != nil {
-			return nil
+		} else {
+			nodeModules := filepath.Join(ext.Dir, "node_modules")
+			if _, err := os.Stat(nodeModules); os.IsNotExist(err) {
+				install := exec.Command("npm", "install")
+				install.Dir = ext.Dir
+				install.Stdout = os.Stdout
+				install.Stderr = os.Stderr
+				if install.Run() != nil {
+					log.Printf("Baileys extension: npm install failed")
+					return nil
+				}
+			}
+			build := exec.Command("npm", "run", "build")
+			build.Dir = ext.Dir
+			build.Stdout = os.Stdout
+			build.Stderr = os.Stderr
+			if build.Run() != nil {
+				return nil
+			}
 		}
 	}
 	if _, err := os.Stat(entryPath); err != nil {
 		return nil
 	}
 
-	cmd := exec.Command("node", entryPath)
-	cmd.Dir = extDir
+	var cmd *exec.Cmd
+	if ext.Manifest.Start != "" {
+		cmd = extensions.RunStart(ext.Dir, ext.Manifest)
+	}
+	if cmd == nil {
+		cmd = exec.Command("node", entryPath)
+	}
+	cmd.Dir = ext.Dir
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

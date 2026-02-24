@@ -1,6 +1,6 @@
 # WhatsApp Setup Guide
 
-Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extension.
+Connect Sypher-mini to WhatsApp via QR code (Baileys, default) or a WebSocket bridge.
 
 ---
 
@@ -10,8 +10,10 @@ Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extensio
 2. [Option 1: WebSocket Bridge](#option-1-websocket-bridge)
 3. [Option 2: Baileys Extension](#option-2-baileys-extension)
 4. [Configuration](#configuration)
-5. [Security](#security)
-6. [Troubleshooting](#troubleshooting)
+5. [Menu and Routing](#menu-and-routing)
+6. [CLI Session Commands](#cli-session-commands)
+7. [Security](#security)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -19,8 +21,8 @@ Connect Sypher-mini to WhatsApp via the WebSocket bridge or the Baileys extensio
 
 | Method | Pros | Cons |
 |--------|------|------|
+| **Baileys (default)** | Self-contained, no browser, QR pairing | Node.js 20+ required |
 | **Bridge** | Use existing bridge (e.g. whatsapp-web.js) | Requires separate bridge process |
-| **Baileys** | Self-contained, no browser | Node.js required, QR pairing |
 
 ---
 
@@ -78,7 +80,7 @@ The Baileys extension uses [@whiskeysockets/baileys](https://github.com/WhiskeyS
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm
 
 ### Setup
@@ -145,7 +147,7 @@ npm run build && npm start
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `use_baileys` | `false` | Use Baileys extension instead of WebSocket bridge |
+| `use_baileys` | `true` | Use Baileys (QR) extension; set `false` and `bridge_url` for WebSocket bridge |
 | `baileys_url` | `http://localhost:3002` | Extension HTTP endpoint |
 
 ### Extension API
@@ -187,6 +189,36 @@ For future WhatsApp command tiers:
 
 ---
 
+## Menu and Routing
+
+| You send | What happens |
+|----------|--------------|
+| `menu` or `/help` | Shows the main menu (Projects, Tasks, Logs, CLI, Server, Help) |
+| `1`–`6`, `0`, `back` | Navigate menus (only when already in a menu session) |
+| `sypher` + request | Routes to the agent with full tools (e.g. "sypher create a hello world script") |
+| `/config`, `/cli`, etc. | Slash commands (see below) |
+| `42`, `sudo`, `joke`, `coffee`, `roll dice`, `hello world` | Easter eggs — try them. |
+| `7` (from menu) | Roll the dice — 1d6, 2d6, 1d20 |
+| Anything else | Agent with full tools |
+
+All features are available via the menu or by talking to the agent. Type `menu` or `/help` to see options.
+
+## CLI Session Commands
+
+Manage persistent CLI terminals from WhatsApp:
+
+| Command | Description |
+|---------|-------------|
+| `/cli list` or `cli list` | List active CLI sessions (ID, tag, last activity) |
+| `/cli new -m 'tag'` | Create new terminal with tag |
+| `/cli <N>` | Show last 10 lines of terminal N |
+| `/cli <N> --tail 50` | Show last 50 lines (max 100) |
+| `/cli run <N> <command>` | Run command in terminal N |
+
+**Examples:** `cli new -m 'starting dev'`, `cli 1 --tail 100`, `cli run 1 npm run dev`
+
+---
+
 ## Security
 
 1. **allow_from** — Always restrict in production
@@ -202,9 +234,16 @@ For future WhatsApp command tiers:
 - Ensure bridge is running before gateway
 - Check `bridge_url` port matches bridge
 
+### Baileys: ERR_REQUIRE_ESM or "require() of ES Module not supported"
+
+- Extension uses ESM; ensure `package.json` has `"type": "module"` and `tsconfig` has `"module": "ES2020"`
+- Rebuild: `cd extensions/whatsapp-baileys && npm run build`
+- Node 18+ required: `node -v`
+
+
 ### Baileys: QR code doesn't appear
 
-- Check Node.js version: `node -v` (need 18+)
+- Check Node.js version: `node -v` (need 20+)
 - Ensure gateway is running (extension needs `/inbound` to exist)
 - Check `SYPHER_CORE_CALLBACK` is correct
 
@@ -212,6 +251,13 @@ For future WhatsApp command tiers:
 
 - Delete `~/.sypher-mini/whatsapp-auth/` and re-pair
 - Check WhatsApp account is not logged in elsewhere
+
+### Baileys: "Bad MAC" / "Failed to decrypt message with any known session"
+
+- Session keys are out of sync with the sender's device.
+- **Fix:** Delete auth and re-pair: `rm -rf ~/.sypher-mini/whatsapp-auth/` (or `%USERPROFILE%\.sypher-mini\whatsapp-auth` on Windows), then restart and scan a new QR code.
+- Ensure only one login per account (unlink other WhatsApp Web/Baileys instances).
+- If errors persist, check that you're not in groups/broadcasts with many senders; some sessions may be stale and will recover automatically ("Closing open session in favor of incoming prekey bundle").
 
 ### Messages not received
 

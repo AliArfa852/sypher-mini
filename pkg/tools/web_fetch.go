@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -46,9 +48,32 @@ func (t *WebFetchTool) Execute(ctx context.Context, req Request) Response {
 			"URL is required.",
 			CodePermissionDenied, false)
 	}
+	urlStr = strings.TrimSpace(urlStr)
 
-	// Extract host for policy check
+	// Validate URL scheme (http/https only)
+	parsed, err := url.Parse(urlStr)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ErrorResponse(req.ToolCallID,
+			"Invalid URL: only http and https schemes allowed",
+			"Invalid URL.",
+			CodePermissionDenied, false)
+	}
+	if parsed.Host == "" {
+		return ErrorResponse(req.ToolCallID,
+			"Invalid URL: missing host",
+			"Invalid URL.",
+			CodePermissionDenied, false)
+	}
+
+	// SSRF protection: block internal/private IPs and hostnames
 	host := extractHost(urlStr)
+	if isBlockedHost(host) {
+		return ErrorResponse(req.ToolCallID,
+			"URL host not allowed (internal/private addresses blocked)",
+			"Access denied.",
+			CodePermissionDenied, false)
+	}
+
 	if t.policyEval != nil && !t.policyEval.CanAccessNetwork(req.AgentID, host) {
 		return ErrorResponse(req.ToolCallID,
 			"URL host not allowed by network policy",
@@ -112,4 +137,55 @@ func extractHost(urlStr string) string {
 		urlStr = urlStr[:idx]
 	}
 	return urlStr
+}
+
+// isBlockedHost returns true for internal/private hostnames and IPs (SSRF protection).
+func isBlockedHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return true
+	}
+	// Block common internal hostnames
+	blockedNames := []string{"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
+	for _, b := range blockedNames {
+		if host == b || strings.HasSuffix(host, "."+b) {
+			return true
+		}
+	}
+	// Resolve host to IP(s) and check for private/internal ranges
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		// On resolution failure, block to be safe
+		return true
+	}
+	for _, ip := range ips {
+		if ip4 := ip.To4(); ip4 != nil {
+			// IPv4: block loopback, link-local, private, and reserved
+			if ip4[0] == 127 {
+				return true
+			}
+			if ip4[0] == 10 {
+				return true
+			}
+			if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+				return true
+			}
+			if ip4[0] == 192 && ip4[1] == 168 {
+				return true
+			}
+			if ip4[0] == 169 && ip4[1] == 254 {
+				return true
+			}
+		} else {
+			// IPv6: block loopback and link-local
+			ip6 := ip.To16()
+			if ip6 != nil && (ip6[0] == 0xfe && ip6[1] == 0x80) {
+				return true // fe80:: link-local
+			}
+			if ip.Equal(net.IPv6loopback) {
+				return true
+			}
+		}
+	}
+	return false
 }

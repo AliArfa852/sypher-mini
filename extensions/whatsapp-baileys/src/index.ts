@@ -19,6 +19,7 @@ const CORE_CALLBACK = process.env.SYPHER_CORE_CALLBACK || 'http://localhost:1879
 interface InboundPayload {
   type: string;
   from: string;
+  from_pn?: string;  // Phone number JID (e.g. 923406498469@s.whatsapp.net) when remoteJid is LID - for allow_from matching
   content: string;
   chat_id: string;
 }
@@ -26,15 +27,30 @@ interface InboundPayload {
 let sock: Awaited<ReturnType<typeof makeWASocket>> | null = null;
 
 async function sendToCore(payload: InboundPayload) {
-  try {
-    const url = new URL(CORE_CALLBACK);
-    await fetch(url.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    console.error('Failed to send to core:', e);
+  const url = new URL(CORE_CALLBACK);
+  const opts = {
+    method: 'POST' as const,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  };
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url.toString(), opts);
+      if (res.ok) return;
+    } catch (e) {
+      const err = e as Error & { cause?: unknown };
+      const errMsg = [err?.message, String(err?.cause ?? ''), String(e)].join(' ');
+      const isRefused = errMsg.includes('ECONNREFUSED');
+      if (attempt === maxRetries - 1) {
+        console.error('Failed to send to core:', e);
+        if (isRefused) {
+          console.error('Hint: Start the gateway first: sypher gateway (must run before this extension)');
+        }
+      } else {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
   }
 }
 
@@ -69,9 +85,13 @@ async function connect() {
       if (m.message?.conversation || m.message?.extendedTextMessage?.text) {
         const text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
         const from = m.key.remoteJid || '';
+        // When remoteJid is LID (e.g. 60838547296357@lid), include from_pn for allow_from matching by phone number
+        const key = m.key as { senderPn?: string; participantPn?: string };
+        const fromPn = key?.senderPn || key?.participantPn;
         await sendToCore({
           type: 'inbound',
           from,
+          ...(fromPn && { from_pn: fromPn }),
           content: text,
           chat_id: from,
         });

@@ -3,11 +3,15 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/sypherexx/sypher-mini/pkg/audit"
 	"github.com/sypherexx/sypher-mini/pkg/bus"
+	"github.com/sypherexx/sypher-mini/pkg/clisession"
 	"github.com/sypherexx/sypher-mini/pkg/config"
 	"github.com/sypherexx/sypher-mini/pkg/idempotency"
 	"github.com/sypherexx/sypher-mini/pkg/intent"
@@ -18,7 +22,12 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/task"
 	"github.com/sypherexx/sypher-mini/pkg/tools"
 	"github.com/sypherexx/sypher-mini/pkg/policy"
+	"github.com/sypherexx/sypher-mini/pkg/menu"
+	"github.com/sypherexx/sypher-mini/pkg/commands"
+	"github.com/sypherexx/sypher-mini/pkg/platform"
+	"github.com/sypherexx/sypher-mini/pkg/project"
 	"github.com/sypherexx/sypher-mini/pkg/replay"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 // Loop is the main agent loop that processes inbound messages.
@@ -28,13 +37,15 @@ type Loop struct {
 	eventBus    *bus.Bus
 	taskMgr     *task.Manager
 	provider    providers.LLMProvider
-	execTool       *tools.ExecTool
-	killTool       *tools.KillTool
-	webFetch       *tools.WebFetchTool
-	messageTool    *tools.MessageTool
-	tailOutput     *tools.TailOutputTool
-	streamCommand  *tools.StreamCommandTool
-	metrics        *observability.Metrics
+	execTool         *tools.ExecTool
+	killTool         *tools.KillTool
+	webFetch         *tools.WebFetchTool
+	messageTool      *tools.MessageTool
+	tailOutput       *tools.TailOutputTool
+	streamCommand    *tools.StreamCommandTool
+	invokeCliAgent   *tools.InvokeCliAgentTool
+	cliManager      *clisession.Manager
+	metrics         *observability.Metrics
 	auditLogger *audit.Logger
 	procTracker *process.Tracker
 	policyEval  *policy.Evaluator
@@ -42,6 +53,8 @@ type Loop struct {
 	idempotency   *idempotency.Cache
 	safeMode      bool
 	running       atomic.Bool
+	menuHandler   *menu.Handler
+	projectStore  *project.Store
 }
 
 // LoopOptions configures the agent loop.
@@ -78,6 +91,8 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	messageTool := tools.NewMessageTool(msgBus, opts.SafeMode)
 	tailOutput := tools.NewTailOutputTool(cfg, opts.SafeMode)
 	streamCommand := tools.NewStreamCommandTool(cfg, msgBus, messageTool, opts.SafeMode)
+	invokeCliAgent := tools.NewInvokeCliAgentTool(cfg, opts.SafeMode)
+	cliManager := clisession.NewManagerWithPersistence("")
 	replayWriter := replay.NewWriter(cfg)
 	metrics := observability.NewMetrics()
 
@@ -90,19 +105,21 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		idemCache = idempotency.New(time.Duration(ttl) * time.Second)
 	}
 
-	return &Loop{
+	l := &Loop{
 		cfg:         cfg,
 		msgBus:      msgBus,
 		eventBus:    eventBus,
 		taskMgr:     taskMgr,
 		provider:    provider,
-		execTool:    execTool,
-		killTool:    killTool,
-		webFetch:      webFetch,
-		messageTool:   messageTool,
-		tailOutput:    tailOutput,
-		streamCommand: streamCommand,
-		replayWriter:  replayWriter,
+		execTool:       execTool,
+		killTool:       killTool,
+		webFetch:       webFetch,
+		messageTool:    messageTool,
+		tailOutput:     tailOutput,
+		streamCommand:  streamCommand,
+		invokeCliAgent: invokeCliAgent,
+		cliManager:     cliManager,
+		replayWriter:   replayWriter,
 		idempotency:   idemCache,
 		metrics:       metrics,
 		auditLogger: auditLogger,
@@ -110,6 +127,28 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		policyEval:  policyEval,
 		safeMode:    opts.SafeMode,
 	}
+	workspace := config.ExpandPath(cfg.Agents.Defaults.Workspace)
+	if workspace == "" {
+		workspace = config.ExpandPath("~/.sypher-mini/workspace")
+	}
+	l.projectStore = project.NewStore(workspace)
+	l.menuHandler = menu.NewHandler(cfg, l, "")
+	// Wire project dirs into exec tool so CLI/exec can run in registered project dirs
+	execTool.SetProjectDirsResolver(func() []string {
+		projects, err := l.projectStore.List()
+		if err != nil {
+			return nil
+		}
+		dirs := make([]string, 0, len(projects))
+		for _, p := range projects {
+			abs := p.AbsPath(cfg.Agents.Defaults.Workspace)
+			if abs != "" {
+				dirs = append(dirs, abs)
+			}
+		}
+		return dirs
+	})
+	return l
 }
 
 // Run starts the agent loop. It processes inbound messages until ctx is cancelled.
@@ -138,6 +177,8 @@ func (l *Loop) Run(ctx context.Context) error {
 					ChatID:  msg.ChatID,
 					Content: response,
 				})
+			} else if msg.Channel == "whatsapp" {
+				log.Printf("[gateway] agent produced no response for from=%q content=%q (check allow_from, LLM provider)", msg.SenderID, utils.Truncate(msg.Content, 40))
 			}
 		}
 	}
@@ -152,7 +193,7 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
 				Name:        "exec",
-				Description: "Execute a shell command and return its output. Use with caution. Commands run in the workspace.",
+				Description: "Execute a shell command and return its output. Commands run in the workspace. Use platform-appropriate syntax (Windows: cmd; Linux/macOS: sh). See runtime context in system prompt.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -224,7 +265,7 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
 				Name:        "stream_command",
-				Description: "Run a command and stream output to the user. Only commands in live_monitoring.allowed_commands are permitted.",
+				Description: "Run a command and stream output to the user. Only commands in live_monitoring.allowed_commands are permitted (e.g. npm run, go run, gemini).",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -235,11 +276,52 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
+				Name:        "invoke_cli_agent",
+				Description: "Invoke a configured CLI agent (e.g. Gemini CLI) with a task. Use for code generation when an agent with command/args is configured.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"task":        map[string]interface{}{"type": "string", "description": "Task/prompt for the CLI agent"},
+						"agent_id":    map[string]interface{}{"type": "string", "description": "Agent ID to use (optional; uses first agent with command/args if omitted)"},
+						"working_dir": map[string]interface{}{"type": "string", "description": "Working directory (optional)"},
+					},
+					"required": []interface{}{"task"},
+				},
+			},
+		},
 	}
 }
 
 // processMessage handles a single inbound message.
 func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	// WhatsApp: enforce allow_from (silent drop if sender not allowed)
+	if msg.Channel == "whatsapp" {
+		allowFrom := l.cfg.Channels.WhatsApp.AllowFrom
+		if len(allowFrom) > 0 {
+			allowed := false
+			senderNorm := utils.NormalizeWhatsAppID(msg.SenderID)
+			for _, a := range allowFrom {
+				if a == msg.SenderID || (senderNorm != "" && utils.NormalizeWhatsAppID(a) == senderNorm) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return "", nil // Silent drop; no response
+			}
+		}
+	}
+
+	// WhatsApp: menu workflow (menu, /help, numeric-in-menu) before slash commands
+	if msg.Channel == "whatsapp" && l.menuHandler != nil {
+		if handled, response := l.menuHandler.Handle(ctx, msg); handled {
+			return response, nil
+		}
+	}
+
 	// WhatsApp command parsing (config get, agents list, etc.)
 	if msg.Channel == "whatsapp" {
 		if isCmd, cmd, args, tier := intent.ParseWhatsAppCommand(msg.Content, msg.SenderID, &l.cfg.Channels); isCmd && cmd != "" {
@@ -316,7 +398,7 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			if l.safeMode {
 				result = fmt.Sprintf("Received: %q (LLM disabled in safe mode)", msg.Content)
 			} else {
-				result = fmt.Sprintf("Received: %q (no LLM provider configured - set CEREBRAS_API_KEY or OPENAI_API_KEY)", msg.Content)
+				result = fmt.Sprintf("Received: %q (no LLM provider configured - set GEMINI_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY)", msg.Content)
 			}
 			return nil
 		}
@@ -333,10 +415,23 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			maxIter = 20
 		}
 
+		minInterval := l.cfg.Providers.LLMRateLimit.MinIntervalSec
+		if !l.cfg.Providers.PaidTier && minInterval <= 0 {
+			minInterval = 5 // 5 sec between LLM calls (free tier) to avoid rate limits
+		}
 		for iter := 0; iter < maxIter; iter++ {
 			if t.IsCancelled() {
 				t.Transition(task.StateKilled)
 				return context.Canceled
+			}
+
+			// Inter-iteration delay: space out LLM calls to avoid rate limits (skip first iteration)
+			if iter > 0 && minInterval > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(minInterval) * time.Second):
+				}
 			}
 
 			// Context summarization: truncate when over threshold (rough: 4 chars = 1 token)
@@ -350,7 +445,7 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			})
 			if err != nil {
 				t.Transition(task.StateFailed)
-				result = fmt.Sprintf("LLM error: %v", err)
+				result = providers.UserFriendlyLLMError(err)
 				return nil
 			}
 
@@ -392,6 +487,8 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 					toolResp = l.tailOutput.Execute(ctx, req)
 				case "stream_command":
 					toolResp = l.streamCommand.Execute(ctx, req)
+				case "invoke_cli_agent":
+					toolResp = l.invokeCliAgent.Execute(ctx, req)
 				default:
 					toolResp = tools.ErrorResponse(tc.ID, "Unknown tool: "+tc.Name, "Unknown tool.", tools.CodePermissionDenied, false)
 				}
@@ -541,8 +638,476 @@ func (l *Loop) handleWhatsAppCommand(ctx context.Context, cmd string, args []str
 		return "Usage: audit <task_id>", nil
 	case "status":
 		return fmt.Sprintf("Agents: %d, Timeout: %ds", len(l.cfg.Agents.List), l.cfg.Task.TimeoutSec), nil
+	case "cli":
+		return l.handleCliCommand(ctx, args, msg)
+	case "projects":
+		return l.handleProjectsCommand(ctx, args, msg)
 	}
 	return "", nil
+}
+
+// extractCliRunCommand extracts the command from "cli run N <cmd>" using raw content for quote-aware parsing.
+func extractCliRunCommand(content, sessionID string) string {
+	lower := strings.ToLower(content)
+	// Find "run N " or "run N" at end - sessionID is the N
+	needle := "run " + sessionID
+	idx := strings.Index(lower, needle)
+	if idx < 0 {
+		return ""
+	}
+	rest := content[idx+len(needle):]
+	rest = strings.TrimSpace(rest)
+	// Trim surrounding quotes so 'ls -a' becomes ls -a
+	if len(rest) >= 2 {
+		if (rest[0] == '\'' && rest[len(rest)-1] == '\'') || (rest[0] == '"' && rest[len(rest)-1] == '"') {
+			rest = rest[1 : len(rest)-1]
+		}
+	}
+	return rest
+}
+
+// handleCliCommand handles sypher cli list|new|N [--tail N].
+func (l *Loop) handleCliCommand(ctx context.Context, args []string, msg bus.InboundMessage) (string, error) {
+	if len(args) == 0 {
+		return "Usage: cli list | cli new -m 'tag' | cli <N> [--tail N]", nil
+	}
+	switch args[0] {
+	case "run":
+		if len(args) < 3 {
+			return "Usage: cli run <session_id> <command>", nil
+		}
+		var sid int
+		if _, err := fmt.Sscanf(args[1], "%d", &sid); err != nil {
+			return "Invalid session ID", nil
+		}
+		cmdStr := extractCliRunCommand(msg.Content, args[1])
+		if cmdStr == "" {
+			cmdStr = strings.Join(args[2:], " ")
+		}
+		s := l.cliManager.Get(sid)
+		if s == nil {
+			return fmt.Sprintf("Session %d not found", sid), nil
+		}
+		// Handle "cd" specially: update session working dir if path is allowed
+		if strings.HasPrefix(strings.TrimSpace(cmdStr), "cd ") {
+			pathPart := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(cmdStr), "cd "))
+			if pathPart != "" && l.execTool.IsWorkingDirAllowed(pathPart) {
+				expanded := config.ExpandPath(pathPart)
+				if expanded == "" {
+					expanded = pathPart
+				}
+				abs, _ := filepath.Abs(expanded)
+				if abs != "" {
+					s.SetWorkingDir(abs)
+					l.cliManager.Persist()
+					return fmt.Sprintf("Changed directory to %s", abs), nil
+				}
+			}
+			return "Path not allowed. Register the project with 'projects add <path>' first.", nil
+		}
+		// Run via exec and append output to session
+		execArgs := map[string]interface{}{"command": cmdStr}
+		if wd := s.GetWorkingDir(); wd != "" {
+			execArgs["working_dir"] = wd
+		}
+		req := tools.Request{
+			ToolCallID: "cli-run",
+			TaskID:    "cli-" + args[1],
+			AgentID:   "main",
+			Name:      "exec",
+			Args:      execArgs,
+		}
+		resp := l.execTool.Execute(ctx, req)
+		output := resp.ForLLM
+		if resp.IsError {
+			output = "Error: " + output
+		}
+		s.Append(output)
+		l.cliManager.Persist()
+		return output, nil
+	case "list":
+		sessions := l.cliManager.List()
+		if len(sessions) == 0 {
+			return "No active CLI sessions. Use 'cli new -m \"tag\"' to create one.", nil
+		}
+		var out string
+		for _, s := range sessions {
+			ago := "just now"
+			if d := time.Since(s.LastActivity); d > time.Minute {
+				ago = fmt.Sprintf("%.0fm ago", d.Minutes())
+			}
+			out += fmt.Sprintf("%d: %s (active %s)\n", s.ID, s.Tag, ago)
+		}
+		return out, nil
+	case "new":
+		tag := ""
+		for i := 1; i < len(args); i++ {
+			if args[i] == "-m" && i+1 < len(args) {
+				tag = strings.Join(args[i+1:], " ")
+				break
+			}
+		}
+		if tag == "" {
+			tag = "unnamed"
+		}
+		s := l.cliManager.New(tag)
+		return fmt.Sprintf("Created CLI session %d: %s", s.ID, tag), nil
+	default:
+		// args[0] is session number, parse --tail N
+		var id int
+		if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil {
+			return "Usage: cli <session_id> [--tail N]", nil
+		}
+		tail := clisession.DefaultTailLines
+		for i := 1; i < len(args)-1; i++ {
+			if args[i] == "--tail" && i+1 < len(args) {
+				if n, err := fmt.Sscanf(args[i+1], "%d", &tail); err == nil && n == 1 {
+					if tail > clisession.MaxTailLines {
+						tail = clisession.MaxTailLines
+					}
+				}
+				break
+			}
+		}
+		s := l.cliManager.Get(id)
+		if s == nil {
+			return fmt.Sprintf("Session %d not found. Use 'cli list' to see active sessions.", id), nil
+		}
+		out := s.Tail(tail)
+		if out == "" {
+			return fmt.Sprintf("Session %d (%s): no output yet", id, s.Tag), nil
+		}
+		return fmt.Sprintf("Session %d (%s) last %d lines:\n%s", id, s.Tag, tail, out), nil
+	}
+}
+
+// handleProjectsCommand handles /projects list|build|pull|run|add|scan.
+func (l *Loop) handleProjectsCommand(ctx context.Context, args []string, msg bus.InboundMessage) (string, error) {
+	if len(args) == 0 {
+		return l.RunProjectsList(ctx, msg)
+	}
+	sub := strings.ToLower(args[0])
+	switch sub {
+	case "list", "ls":
+		return l.RunProjectsList(ctx, msg)
+	case "build":
+		if len(args) < 2 {
+			return l.RunProjectsBuild(ctx, "", msg)
+		}
+		return l.RunProjectsBuild(ctx, args[1], msg)
+	case "pull":
+		if len(args) < 2 {
+			return l.RunProjectsPull(ctx, "", msg)
+		}
+		return l.RunProjectsPull(ctx, args[1], msg)
+	case "run", "deploy":
+		if len(args) < 2 {
+			return l.RunProjectsRun(ctx, "", msg)
+		}
+		return l.RunProjectsRun(ctx, args[1], msg)
+	case "add", "register":
+		if len(args) < 2 {
+			return "*Add project*\n\nUsage: projects add <path>\nExample: projects add myapp\n\nPath is relative to workspace. Or use 'projects scan' to auto-detect.", nil
+		}
+		return l.RunProjectsAdd(ctx, args[1], msg)
+	case "scan":
+		scanPath := ""
+		if len(args) >= 2 {
+			scanPath = args[1]
+			if strings.HasPrefix(scanPath, "~") {
+				scanPath = config.ExpandPath(scanPath)
+			}
+		}
+		return l.RunProjectsScan(ctx, scanPath, msg)
+	default:
+		return "Usage: projects list | build <id> | pull <id> | run <id> | add <path> | scan", nil
+	}
+}
+
+// RunProjectsRun runs/deploys a project (run_command or docker-compose).
+func (l *Loop) RunProjectsRun(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		return "No projects. Add projects to workspace/code-projects/", nil
+	}
+	if projectID == "" {
+		out := "*Select project to run:*\n\n" + formatProjects(projects)
+		out += "\n\n_Reply: projects run <id>_"
+		return out, nil
+	}
+	p, err := l.projectStore.Get(projectID)
+	if err != nil || p == nil {
+		return "Project not found: " + projectID, nil
+	}
+	dir := p.AbsPath(l.cfg.Agents.Defaults.Workspace)
+	cmd := p.RunCommand
+	if cmd == "" {
+		cmd = "npm run dev"
+	}
+	// Prepend env activation if configured
+	fullCmd := cmd
+	if p.EnvActivate != "" {
+		fullCmd = p.EnvActivate + " && " + cmd
+	}
+	req := tools.Request{TaskID: "menu-run", AgentID: "main", Name: "exec", Args: map[string]interface{}{
+		"command":     fullCmd,
+		"working_dir": dir,
+	}}
+	resp := l.execTool.Execute(ctx, req)
+	if resp.IsError {
+		return "Run failed: " + resp.ForLLM, nil
+	}
+	return "*Run output*\n\n" + resp.ForLLM, nil
+}
+
+// RunProjectsAdd registers a project from a path (relative to workspace or ~/path).
+func (l *Loop) RunProjectsAdd(ctx context.Context, pathArg string, msg bus.InboundMessage) (string, error) {
+	ws := l.projectStore.Workspace()
+	var absPath string
+	if strings.HasPrefix(pathArg, "~") {
+		absPath = config.ExpandPath(pathArg)
+		if absPath == "" {
+			absPath = pathArg
+		}
+	} else if filepath.IsAbs(pathArg) {
+		absPath = pathArg
+	} else {
+		var err error
+		absPath, err = filepath.Abs(filepath.Join(ws, pathArg))
+		if err != nil {
+			absPath = filepath.Join(ws, pathArg)
+		}
+	}
+	p := project.SuggestProject(absPath, ws)
+	if err := l.projectStore.Add(p); err != nil {
+		return "Add failed: " + err.Error(), nil
+	}
+	return fmt.Sprintf("*Project added:* %s\nPath: %s\n\nEdit ~/.sypher-mini/workspace/code-projects/%s.json to set build_command, run_command, env_activate.", p.Name, p.Path, p.ID), nil
+}
+
+// RunProjectsScan scans workspace (or path if given) and lists detected projects.
+func (l *Loop) RunProjectsScan(ctx context.Context, path string, msg bus.InboundMessage) (string, error) {
+	scanDir := l.projectStore.Workspace()
+	if path != "" {
+		scanDir = path
+	}
+	scanned := project.ScanPath(scanDir)
+	existing, _ := l.projectStore.List()
+	existingPaths := make(map[string]bool)
+	for _, p := range existing {
+		existingPaths[p.AbsPath(l.cfg.Agents.Defaults.Workspace)] = true
+	}
+	var newOnes []string
+	for _, path := range scanned {
+		if !existingPaths[path] {
+			newOnes = append(newOnes, path)
+		}
+	}
+	if len(scanned) == 0 {
+		return "No projects detected in workspace.", nil
+	}
+	out := "*Detected projects:*\n\n" + formatPaths(scanned, 1)
+	if len(newOnes) > 0 {
+		out += "\n\n_Unregistered: use 'projects add <path>' to add (e.g. projects add " + filepath.Base(newOnes[0]) + ")_"
+	}
+	return out, nil
+}
+
+// RunCliList implements menu.ActionRunner.
+func (l *Loop) RunCliList(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return l.handleCliCommand(ctx, []string{"list"}, msg)
+}
+
+// RunCliNew implements menu.ActionRunner.
+func (l *Loop) RunCliNew(ctx context.Context, tag string, msg bus.InboundMessage) (string, error) {
+	args := []string{"new"}
+	if tag != "" {
+		args = append(args, "-m", tag)
+	}
+	return l.handleCliCommand(ctx, args, msg)
+}
+
+// RunStatus implements menu.ActionRunner.
+func (l *Loop) RunStatus(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return l.handleWhatsAppCommand(ctx, "status", nil, intent.TierUser, msg)
+}
+
+// RunConfigStatus implements menu.ActionRunner.
+func (l *Loop) RunConfigStatus(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	status, _ := l.handleWhatsAppCommand(ctx, "status", nil, intent.TierUser, msg)
+	model := l.cfg.Agents.Defaults.Model
+	if model == "" {
+		model = "default"
+	}
+	var agents string
+	for i, a := range l.cfg.Agents.List {
+		agents += fmt.Sprintf("%d: %s\n", i+1, a.ID)
+	}
+	if agents == "" {
+		agents = "No agents"
+	}
+	return fmt.Sprintf("*Config*\nModel: %s\n\n%s\n\n*Agents*\n%s", model, status, agents), nil
+}
+
+// RunProjectsList implements menu.ActionRunner.
+func (l *Loop) RunProjectsList(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error listing projects: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		scanned := project.ScanWorkspace(l.projectStore.Workspace())
+		if len(scanned) > 0 {
+			return "*Projects (auto-detected)*\n\nAdd JSON files to `workspace/code-projects/` to register. Detected:\n" + formatPaths(scanned, 1), nil
+		}
+		return "*No projects registered.*\n\nAdd JSON files to `~/.sypher-mini/workspace/code-projects/` (e.g. myapp.json) with id, name, path, build_command.", nil
+	}
+	return "*Projects*\n\n" + formatProjects(projects), nil
+}
+
+// RunProjectsBuild implements menu.ActionRunner. When projectID is empty, shows list with instructions.
+func (l *Loop) RunProjectsBuild(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		return "No projects. Add projects to workspace/code-projects/", nil
+	}
+	if projectID != "" {
+		p, err := l.projectStore.Get(projectID)
+		if err != nil || p == nil {
+			return "Project not found: " + projectID, nil
+		}
+		cmd := p.BuildCommand
+		if cmd == "" {
+			cmd = "npm run build"
+		}
+		dir := p.AbsPath(l.cfg.Agents.Defaults.Workspace)
+		req := tools.Request{TaskID: "menu-build", AgentID: "main", Name: "exec", Args: map[string]interface{}{
+			"command":     cmd,
+			"working_dir": dir,
+		}}
+		resp := l.execTool.Execute(ctx, req)
+		if resp.IsError {
+			return "Build failed: " + resp.ForLLM, nil
+		}
+		return "*Build complete*\n\n" + resp.ForLLM, nil
+	}
+	out := "*Select project to build:*\n\n" + formatProjects(projects)
+	out += "\n\n_Reply with number (1-" + fmt.Sprintf("%d", len(projects)) + ") or say 'sypher build <project-id>'. Reply within 10 minutes._"
+	return out, nil
+}
+
+// RunProjectsPull implements menu.ActionRunner.
+func (l *Loop) RunProjectsPull(ctx context.Context, projectID string, msg bus.InboundMessage) (string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	if len(projects) == 0 {
+		return "No projects.", nil
+	}
+	if projectID != "" {
+		p, err := l.projectStore.Get(projectID)
+		if err != nil || p == nil {
+			return "Project not found: " + projectID, nil
+		}
+		dir := p.AbsPath(l.cfg.Agents.Defaults.Workspace)
+		req := tools.Request{TaskID: "menu-pull", AgentID: "main", Name: "exec", Args: map[string]interface{}{
+			"command":     "git pull",
+			"working_dir": dir,
+		}}
+		resp := l.execTool.Execute(ctx, req)
+		if resp.IsError {
+			return "Pull failed: " + resp.ForLLM, nil
+		}
+		return "*Pull complete*\n\n" + resp.ForLLM, nil
+	}
+	out := "*Select project to pull:*\n\n" + formatProjects(projects)
+	out += "\n\n_Reply with number (1-" + fmt.Sprintf("%d", len(projects)) + ") or say 'sypher pull <project-id>'. Reply within 10 minutes._"
+	return out, nil
+}
+
+func formatProjects(projects []*project.Project) string {
+	var out string
+	for i, p := range projects {
+		out += fmt.Sprintf("%d. *%s* — %s", i+1, p.Name, p.Path)
+		if p.BuildCommand != "" {
+			out += " (build: " + p.BuildCommand + ")"
+		}
+		out += "\n"
+	}
+	return out
+}
+
+func formatPaths(paths []string, start int) string {
+	var out string
+	for i, p := range paths {
+		out += fmt.Sprintf("%d. %s\n", start+i, p)
+	}
+	return out
+}
+
+// RunProjectsGetIDs implements menu.ActionRunner.
+func (l *Loop) RunProjectsGetIDs(ctx context.Context) ([]string, error) {
+	projects, err := l.projectStore.List()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(projects))
+	for i, p := range projects {
+		ids[i] = p.ID
+	}
+	return ids, nil
+}
+
+// RunTasksList implements menu.ActionRunner.
+func (l *Loop) RunTasksList(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	tasks := l.taskMgr.List()
+	if len(tasks) == 0 {
+		return "*No running tasks.*", nil
+	}
+	var out string
+	for _, t := range tasks {
+		out += fmt.Sprintf("• %s — %s (%s)\n", t.ID, t.AgentID, t.GetState())
+	}
+	out += "\n_Use /cancel <task_id> to cancel._"
+	return out, nil
+}
+
+// RunTasksGetIDs implements menu.ActionRunner.
+func (l *Loop) RunTasksGetIDs(ctx context.Context) ([]string, error) {
+	tasks := l.taskMgr.List()
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.ID
+	}
+	return ids, nil
+}
+
+// RunTasksCancel implements menu.ActionRunner. When taskID is empty, shows list.
+func (l *Loop) RunTasksCancel(ctx context.Context, taskID string, msg bus.InboundMessage) (string, error) {
+	if taskID == "" {
+		tasks := l.taskMgr.List()
+		if len(tasks) == 0 {
+			return "*No running tasks to cancel.*", nil
+		}
+		var out string
+		for i, t := range tasks {
+			out += fmt.Sprintf("%d. %s — %s\n", i+1, t.ID, t.AgentID)
+		}
+		out += "\n_Reply with number (1-" + fmt.Sprintf("%d", len(tasks)) + ") to cancel._"
+		return out, nil
+	}
+	ok := l.CancelTask(taskID)
+	if ok {
+		return "*Task " + taskID + " cancelled.*", nil
+	}
+	return "Task not found: " + taskID, nil
 }
 
 // truncateMessages keeps system + recent messages when total tokens exceed threshold.
@@ -583,16 +1148,63 @@ func (l *Loop) buildSystemPrompt(agentID string) string {
 	}
 	bootstrap := LoadBootstrapFiles(workspace, agentID)
 
+	platformCtx := platform.AgentContext()
+
+	// Command registry: projects, slash commands, system commands
+	var projectIDs []string
+	if l.projectStore != nil {
+		if projects, err := l.projectStore.List(); err == nil {
+			for _, p := range projects {
+				projectIDs = append(projectIDs, p.ID)
+			}
+		}
+	}
+	commandsDir := filepath.Join(config.ExpandPath("~/.sypher-mini"), "commands")
+	commandSummary := commands.BuildForAgent(commandsDir, projectIDs)
+
+	toolsSummary := `## Available Tools (use these for actions)
+- exec: Execute shell commands (mkdir, git init, etc.). Use for file ops and running commands.
+- kill: Kill a process by PID (only PIDs from exec).
+- web_fetch: Fetch content from a URL.
+- message: Send a reply to the user.
+- tail_output: Read last N lines from a file.
+- stream_command: Run allowed commands with streaming output.
+- invoke_cli_agent: Invoke a configured CLI agent for code generation (only when agent has command/args).`
+
 	hardRules := `## Hard Rules (non-overridable)
-- ALWAYS use tools for actions; never pretend to execute
+- ALWAYS use tools for actions; never pretend to execute or output pseudocode
+- When the user asks to run commands, create files, or use Gemini CLI, you MUST use the appropriate tool (exec, invoke_cli_agent, etc.). Do not respond with instructions only.
+- Call tools by their exact names (exec, kill, web_fetch, message, tail_output, stream_command, invoke_cli_agent)
 - Be helpful and accurate
 - Use memory file for persistent info
 - For messaging channels (WhatsApp, etc.): send ONE consolidated reply per user message; avoid calling the message tool multiple times in one turn`
 
+	parts := []string{}
 	if bootstrap != "" {
-		return bootstrap + "\n\n" + hardRules
+		parts = append(parts, bootstrap)
+	} else {
+		parts = append(parts, "You are Sypher, a coding-centric AI assistant.")
 	}
-	return "You are Sypher, a coding-centric AI assistant.\n\n" + hardRules
+	parts = append(parts, toolsSummary, platformCtx, hardRules)
+	if commandSummary != "" {
+		parts = append(parts, commandSummary)
+	}
+	if l.cliManager != nil {
+		if sessions := l.cliManager.List(); len(sessions) > 0 {
+			var lines []string
+			lines = append(lines, "## Active CLI Sessions")
+			for _, s := range sessions {
+				ago := "just now"
+				if d := time.Since(s.LastActivity); d > time.Minute {
+					ago = fmt.Sprintf("%.0fm ago", d.Minutes())
+				}
+				lines = append(lines, fmt.Sprintf("- %d: %s (active %s)", s.ID, s.Tag, ago))
+			}
+			lines = append(lines, "Use /cli run <N> <command> to run in a session.")
+			parts = append(parts, strings.Join(lines, "\n"))
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // Stop stops the agent loop.

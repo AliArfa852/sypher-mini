@@ -18,6 +18,7 @@ type Config struct {
 	Providers           ProvidersConfig  `json:"providers"`
 	Task                TaskConfig       `json:"task"`
 	Deployment          DeploymentConfig `json:"deployment"`
+	Gateway             GatewayConfig    `json:"gateway,omitempty"`
 	Tools               ToolsConfig      `json:"tools,omitempty"`
 	Audit               AuditConfig      `json:"audit,omitempty"`
 	Policies            PoliciesConfig   `json:"policies,omitempty"`
@@ -91,6 +92,8 @@ type LiveMonitoringConfig struct {
 type ExecToolConfig struct {
 	CustomDenyPatterns []string `json:"custom_deny_patterns,omitempty"`
 	TimeoutSec         int      `json:"timeout_sec"`
+	AllowGitPush       bool     `json:"allow_git_push"`
+	AllowDirs          []string `json:"allow_dirs,omitempty"`
 }
 
 // AuditConfig holds audit logger config.
@@ -188,28 +191,40 @@ type ChannelsConfig struct {
 
 // WhatsAppConfig holds WhatsApp channel config.
 type WhatsAppConfig struct {
-	Enabled    bool     `json:"enabled"`
-	BridgeURL  string   `json:"bridge_url"`
-	BaileysURL string   `json:"baileys_url"` // Extension HTTP endpoint, e.g. http://localhost:3002
-	AllowFrom  []string `json:"allow_from"`
-	Operators  []string `json:"operators,omitempty"`
-	Admins     []string `json:"admins,omitempty"`
-	UseBaileys bool     `json:"use_baileys"`
+	Enabled       bool     `json:"enabled"`
+	BridgeURL     string   `json:"bridge_url"`
+	BaileysURL    string   `json:"baileys_url"`    // Extension HTTP endpoint, e.g. http://localhost:3002
+	AllowFrom     []string `json:"allow_from"`
+	Operators     []string `json:"operators,omitempty"`
+	Admins        []string `json:"admins,omitempty"`
+	UseBaileys    bool     `json:"use_baileys"`
+	MinIntervalSec int     `json:"min_interval_sec"` // Min seconds between outbound messages (default 12)
 }
 
 // ProvidersConfig holds LLM provider configs.
 type ProvidersConfig struct {
 	RoutingStrategy string                 `json:"routing_strategy"`
+	PaidTier        bool                   `json:"paid_tier"`        // If true, disables LLM rate limits (for paid API plans)
+	LLMRateLimit    LLMRateLimitConfig     `json:"llm_rate_limit,omitempty"`
 	Cerebras        ProviderConfig         `json:"cerebras"`
 	OpenAI          ProviderConfig         `json:"openai"`
 	Anthropic       ProviderConfig         `json:"anthropic"`
 	Gemini          ProviderConfig         `json:"gemini"`
+	DeepSeek        ProviderConfig         `json:"deepseek"`
+}
+
+// LLMRateLimitConfig limits API calls per time window (e.g. 2 per 15 sec).
+type LLMRateLimitConfig struct {
+	MaxPerWindow    int `json:"max_per_window"`    // max calls allowed in window (default 2)
+	WindowSec       int `json:"window_sec"`       // window duration in seconds (default 15)
+	MinIntervalSec  int `json:"min_interval_sec"` // min seconds between calls within a task (default 3 when paid_tier false)
 }
 
 // ProviderConfig holds a single provider's config.
 type ProviderConfig struct {
-	APIKey  string `json:"api_key"`
-	APIBase string `json:"api_base,omitempty"`
+	APIKey       string `json:"api_key"`
+	APIBase      string `json:"api_base,omitempty"`
+	DefaultModel string `json:"default_model,omitempty"` // e.g. "llama-3.1-70b", "gpt-4o-mini", "gemini-2.5-flash-lite"
 }
 
 // TaskConfig holds task lifecycle config.
@@ -221,6 +236,12 @@ type TaskConfig struct {
 // DeploymentConfig holds deployment mode config.
 type DeploymentConfig struct {
 	Mode string `json:"mode"`
+}
+
+// GatewayConfig holds gateway HTTP server config.
+type GatewayConfig struct {
+	Bind          string `json:"bind,omitempty"`           // e.g. "127.0.0.1:18790" (default) or "0.0.0.0:18790"
+	InboundSecret string `json:"inbound_secret,omitempty"` // If set, require X-Sypher-Inbound-Secret header on /inbound and /cancel
 }
 
 // GetConfigPath returns the path to the config file.
@@ -272,6 +293,21 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("SYPHER_MINI_MODE"); v != "" {
 		cfg.Deployment.Mode = v
 	}
+	if v := os.Getenv("SYPHER_INBOUND_SECRET"); v != "" {
+		cfg.Gateway.InboundSecret = v
+	}
+	if v := os.Getenv("SYPHER_GATEWAY_BIND"); v != "" {
+		cfg.Gateway.Bind = v
+	}
+	// When GEMINI_API_KEY is set, allow GEMINI_MODEL to override agents.defaults.model
+	if os.Getenv("GEMINI_API_KEY") != "" || cfg.Providers.Gemini.APIKey != "" {
+		if v := os.Getenv("GEMINI_MODEL"); v != "" {
+			cfg.Agents.Defaults.Model = "gemini/" + v
+		}
+	}
+	if v := os.Getenv("SYPHER_LLM_PAID_TIER"); v != "" {
+		cfg.Providers.PaidTier = strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes")
+	}
 }
 
 // DefaultConfig returns a default configuration.
@@ -301,9 +337,11 @@ func DefaultConfig() *Config {
 		AuthorizedTerminals: []string{"default"},
 		Channels: ChannelsConfig{
 			WhatsApp: WhatsAppConfig{
-				Enabled:   false,
-				BridgeURL: "ws://localhost:3001",
-				AllowFrom: []string{},
+				Enabled:    true,
+				BridgeURL:  "ws://localhost:3001",
+				BaileysURL: "http://localhost:3002",
+				UseBaileys: true, // QR connection is default when WhatsApp enabled
+				AllowFrom:  []string{},
 			},
 		},
 		Providers: ProvidersConfig{

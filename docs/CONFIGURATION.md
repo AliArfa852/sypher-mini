@@ -66,10 +66,12 @@ Complete reference for `~/.sypher-mini/config.json`.
   "tools": {
     "exec": {
       "custom_deny_patterns": [],
-      "timeout_sec": 60
+      "timeout_sec": 60,
+      "allow_git_push": false,
+      "allow_dirs": []
     },
     "live_monitoring": {
-      "allowed_commands": ["npm run", "go run", "tail -f"]
+      "allowed_commands": ["npm run", "go run", "tail -f", "gemini"]
     }
   },
   "audit": {
@@ -149,10 +151,11 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `routing_strategy` | string | `cheap_first` | Provider order |
+| `paid_tier` | bool | `false` | Set `true` for paid API plans; disables LLM rate limits |
 | `cerebras.api_key` | string | — | Cerebras API key |
 | `openai.api_key` | string | — | OpenAI API key |
 | `anthropic.api_key` | string | — | Anthropic API key |
-| `gemini.api_key` | string | — | Gemini API key |
+| `gemini.api_key` | string | — | Gemini API key (default model: `gemini-2.5-flash-lite` unless overridden by `GEMINI_MODEL` or `agents.defaults.model`) |
 
 ### task
 
@@ -167,6 +170,33 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 |-------|------|---------|-------------|
 | `custom_deny_patterns` | []string | `[]` | Extra regex patterns to block |
 | `timeout_sec` | int | `60` | Exec command timeout |
+| `allow_git_push` | bool | `false` | Allow `git push` and `git force` (use only in trusted environments) |
+| `allow_dirs` | []string | `[]` | Additional directories allowed for `working_dir` outside workspace (e.g. `E:\demo`) |
+
+### tools.live_monitoring
+
+**Required for `stream_command` tool.** If `allowed_commands` is empty or missing, the stream_command tool will reject all commands.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowed_commands` | []string | `[]` | Commands allowed for live streaming. Use prefix match (e.g. `npm run`, `go run`, `tail -f`, `gemini`). Example: `["npm run", "go run", "tail -f", "gemini"]` |
+
+### invoke_cli_agent tool
+
+The `invoke_cli_agent` tool requires at least one agent in `agents.list` with `command` and `args` configured. Without this, the tool returns "No CLI agent configured."
+
+Example for Gemini CLI:
+
+```json
+{
+  "agents": {
+    "list": [
+      { "id": "main", "default": true },
+      { "id": "gemini-cli", "command": "gemini", "args": ["--model", "gemini-2.0"] }
+    ]
+  }
+}
+```
 
 ### audit
 
@@ -221,6 +251,12 @@ Maps incoming messages to agents. Priority: peer > account > channel wildcard > 
 
 ---
 
+## Menus (config/menus.json or ~/.sypher-mini/menus.json)
+
+Menu JSON keys must be **lowercase** for correct unmarshaling. Use `"title"`, `"items"`, `"id"`, `"label"`, `"action"`, `"submenu"` (not `Title`, `Items`, etc.).
+
+---
+
 ## CLI config commands
 
 ```bash
@@ -235,6 +271,7 @@ sypher config set task.timeout_sec 600
 | Variable | Overrides |
 |----------|-----------|
 | `SYPHER_MINI_MODE` | `deployment.mode` |
+| `SYPHER_LLM_PAID_TIER` | `providers.paid_tier` (true/1/yes) |
 | `CEREBRAS_API_KEY` | `providers.cerebras.api_key` |
 | `OPENAI_API_KEY` | `providers.openai.api_key` |
 | `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |

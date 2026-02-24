@@ -15,6 +15,10 @@ type Manifest struct {
 	SypherMiniVersion  string   `json:"sypher_mini_version"`
 	Capabilities       []string `json:"capabilities"`
 	Entry              string   `json:"entry"`
+	Runtime            string   `json:"runtime"`   // e.g. "node"
+	NodeMin            string   `json:"node_min"`  // e.g. "20"
+	Setup              string   `json:"setup"`     // e.g. "scripts/setup"
+	Start              string   `json:"start"`     // e.g. "scripts/start"
 }
 
 // DiscoveredExtension holds a discovered extension with its manifest.
@@ -37,7 +41,7 @@ func Discover(extensionsDir string) ([]DiscoveredExtension, error) {
 
 	var result []DiscoveredExtension
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), "_") {
 			continue
 		}
 		manifestPath := filepath.Join(extDir, e.Name(), "sypher.extension.json")
@@ -66,12 +70,21 @@ func Discover(extensionsDir string) ([]DiscoveredExtension, error) {
 }
 
 // DiscoverFromWorkspace discovers extensions relative to the workspace root.
-// It looks for extensions/ in the same directory as the binary or in cwd.
+// It looks for extensions/ in cwd, binary dir, or common locations (e.g. ~/sypher-mini).
 func DiscoverFromWorkspace(workspaceRoot string) ([]DiscoveredExtension, error) {
 	candidates := []string{
 		filepath.Join(workspaceRoot, "extensions"),
 		"extensions",
 		"./extensions",
+	}
+	// When run from home dir, also try ~/sypher-mini/extensions
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "sypher-mini", "extensions"))
+	}
+	// When binary is in project root (e.g. ./sypher or go run), use its dir
+	if execPath, err := os.Executable(); err == nil {
+		binDir := filepath.Dir(execPath)
+		candidates = append(candidates, filepath.Join(binDir, "extensions"))
 	}
 	for _, d := range candidates {
 		abs, _ := filepath.Abs(d)

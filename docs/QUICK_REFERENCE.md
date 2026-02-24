@@ -48,6 +48,15 @@ sypher version
 sypher --safe gateway
 ```
 
+### WhatsApp CLI session commands
+
+| Command | Purpose |
+|---------|---------|
+| `sypher cli list` | List active terminals (ID, tag, last activity) |
+| `sypher cli new -m 'tag'` | Create new terminal with tag |
+| `sypher cli <N>` | Show last 10 lines of terminal N |
+| `sypher cli <N> --tail 50` | Show last 50 lines (max 100) |
+
 ---
 
 ## Config paths

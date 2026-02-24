@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/sypherexx/sypher-mini/pkg/config"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 // WhatsAppTier is the authorization tier for WhatsApp commands.
@@ -68,6 +69,25 @@ func ParseWhatsAppCommand(content string, from string, cfg *config.ChannelsConfi
 		}
 	} else if strings.HasPrefix(lower, "/status") || lower == "status" {
 		cmd = "status"
+	} else if strings.HasPrefix(lower, "/cli") || strings.HasPrefix(lower, "cli") {
+		cmd = "cli"
+		args = strings.Fields(content)
+		// Strip "cli" or "/cli" case-insensitively (user may type "Cli", "CLI", etc.)
+		if len(args) > 0 {
+			first := strings.ToLower(args[0])
+			if first == "cli" || first == "/cli" {
+				args = args[1:]
+			}
+		}
+	} else if strings.HasPrefix(lower, "/projects") || strings.HasPrefix(lower, "projects") {
+		cmd = "projects"
+		args = strings.Fields(content)
+		if len(args) > 0 {
+			first := strings.ToLower(args[0])
+			if first == "projects" || first == "/projects" {
+				args = args[1:]
+			}
+		}
 	}
 
 	if cmd == "" {
@@ -97,6 +117,10 @@ func ParseWhatsAppCommand(content string, from string, cfg *config.ChannelsConfi
 		if TierLevel(tier) >= TierLevel(TierUser) {
 			return true, cmd, args, tier
 		}
+	case "cli", "projects":
+		if TierLevel(tier) >= TierLevel(TierUser) {
+			return true, cmd, args, tier
+		}
 	}
 
 	// Command recognized but tier insufficient - still return as command so we can say "access denied"
@@ -104,16 +128,16 @@ func ParseWhatsAppCommand(content string, from string, cfg *config.ChannelsConfi
 }
 
 func resolveTier(from string, allowFrom, operators, admins []string) WhatsAppTier {
-	if !contains(allowFrom, from) && len(allowFrom) > 0 {
+	if len(allowFrom) > 0 && !containsNormalized(allowFrom, from) {
 		return ""
 	}
 	if len(allowFrom) == 0 {
 		// No allow list = allow all as user
 	}
-	if contains(admins, from) {
+	if containsNormalized(admins, from) || contains(admins, from) {
 		return TierAdmin
 	}
-	if contains(operators, from) {
+	if containsNormalized(operators, from) || contains(operators, from) {
 		return TierOperator
 	}
 	return TierUser
@@ -122,6 +146,20 @@ func resolveTier(from string, allowFrom, operators, admins []string) WhatsAppTie
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// containsNormalized checks if v matches any entry when both are normalized (WhatsApp JID vs +123).
+func containsNormalized(list []string, v string) bool {
+	vNorm := utils.NormalizeWhatsAppID(v)
+	if vNorm == "" {
+		return false
+	}
+	for _, x := range list {
+		if utils.NormalizeWhatsAppID(x) == vNorm {
 			return true
 		}
 	}

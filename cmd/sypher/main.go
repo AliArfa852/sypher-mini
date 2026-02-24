@@ -7,14 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/sypherexx/sypher-mini/pkg/agent"
 	"github.com/sypherexx/sypher-mini/pkg/bus"
 	"github.com/sypherexx/sypher-mini/pkg/channels"
@@ -23,9 +27,18 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/extensions"
 	"github.com/sypherexx/sypher-mini/pkg/monitor"
 	"github.com/sypherexx/sypher-mini/pkg/observability"
+	"github.com/sypherexx/sypher-mini/pkg/utils"
 )
 
 var version = "dev"
+
+func init() {
+	// Load .env from cwd or ~/.sypher-mini so API keys (GEMINI_API_KEY, etc.) are available
+	_ = godotenv.Load(".env")
+	if home, err := os.UserHomeDir(); err == nil {
+		_ = godotenv.Load(filepath.Join(home, ".sypher-mini", ".env"))
+	}
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -125,6 +138,57 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
+// safeJoin ensures the resolved path stays under baseDir (prevents path traversal).
+func safeJoin(baseDir, suffix string) (string, error) {
+	path := filepath.Join(baseDir, suffix)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(baseAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path outside base directory")
+	}
+	return path, nil
+}
+
+// taskIDRegex restricts task_id to alphanumeric, hyphen, underscore (prevents path traversal).
+var taskIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func isValidTaskID(id string) bool {
+	return id != "" && len(id) <= 128 && taskIDRegex.MatchString(id)
+}
+
+// isAllowedSender returns true if from is allowed (empty allow_from = allow all).
+// Normalizes WhatsApp IDs: Baileys sends "123@s.whatsapp.net", config may use "+123".
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+func isAllowedSender(from string, allowFrom []string) bool {
+	if len(allowFrom) == 0 {
+		return true
+	}
+	fromNorm := utils.NormalizeWhatsAppID(from)
+	if fromNorm == "" {
+		return false
+	}
+	for _, a := range allowFrom {
+		aNorm := utils.NormalizeWhatsAppID(a)
+		if a == from || aNorm == fromNorm {
+			return true
+		}
+	}
+	return false
+}
+
 func agentCmd(args []string, safeMode bool) {
 	cfg := loadConfig()
 
@@ -221,6 +285,13 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if secret := cfg.Gateway.InboundSecret; secret != "" {
+			if r.Header.Get("X-Sypher-Inbound-Secret") != secret {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 		var payload struct {
 			TaskID string `json:"task_id"`
 		}
@@ -237,9 +308,18 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if secret := cfg.Gateway.InboundSecret; secret != "" {
+			if r.Header.Get("X-Sypher-Inbound-Secret") != secret {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		// Limit request body to 256KB (DoS mitigation)
+		r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 		var payload struct {
 			Type    string `json:"type"`
 			From    string `json:"from"`
+			FromPn  string `json:"from_pn"` // Phone number JID when from is LID - for allow_from matching
 			Content string `json:"content"`
 			ChatID  string `json:"chat_id"`
 		}
@@ -247,20 +327,47 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
+		// Enforce allow_from: drop messages from non-allowed senders (silent)
+		// Use from_pn (phone number) when available for LID messages - matches user's +923406498469 etc
+		fromForAllow := payload.From
+		if payload.FromPn != "" {
+			fromForAllow = payload.FromPn
+		}
+		if !isAllowedSender(fromForAllow, cfg.Channels.WhatsApp.AllowFrom) {
+			// When from is LID, from_pn (phone) may be sent by extension for matching - if missing, add LID digits
+			log.Printf("[gateway] inbound dropped: from=%q not in allow_from (add phone e.g. +923406498469 or LID digits %q)", payload.From, utils.NormalizeWhatsAppID(payload.From))
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
+		// Limit content length to 64KB
+		content := payload.Content
+		if len(content) > 64*1024 {
+			content = content[:64*1024] + "\n\n... (truncated)"
+		}
 		chatID := payload.ChatID
 		if chatID == "" {
 			chatID = payload.From
 		}
+		senderID := payload.From
+		if payload.FromPn != "" {
+			senderID = payload.FromPn
+		}
+		log.Printf("[gateway] inbound from=%q content=%q", payload.From, truncateForLog(content, 60))
 		msgBus.PublishInbound(bus.InboundMessage{
 			Channel:  "whatsapp",
 			ChatID:   chatID,
-			Content:  payload.Content,
-			SenderID: payload.From,
+			Content:  content,
+			SenderID: senderID,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
-	srv := &http.Server{Addr: ":18790", Handler: mux}
+	addr := cfg.Gateway.Bind
+	if addr == "" {
+		addr = "127.0.0.1:18790"
+	}
+	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		_ = srv.ListenAndServe()
 	}()
@@ -273,18 +380,38 @@ func gatewayCmd(args []string, safeMode bool) {
 	if cfg.Channels.WhatsApp.Enabled {
 		health.Set("whatsapp", "ok")
 
-		if cfg.Channels.WhatsApp.UseBaileys {
+		// Prefer Baileys (QR) when use_baileys is true or no bridge configured
+		useBaileys := cfg.Channels.WhatsApp.UseBaileys || cfg.Channels.WhatsApp.BridgeURL == ""
+		if useBaileys {
 			// Baileys extension: inbound via /inbound, outbound via HTTP to extension
 			baileysURL := cfg.Channels.WhatsApp.BaileysURL
 			if baileysURL == "" {
 				baileysURL = "http://localhost:3002"
 			}
-			baileysClient := channels.NewWhatsAppBaileysClient(baileysURL, msgBus)
+			minInterval := cfg.Channels.WhatsApp.MinIntervalSec
+			if minInterval <= 0 {
+				minInterval = 12
+			}
+			baileysClient := channels.NewWhatsAppBaileysClient(baileysURL, msgBus, minInterval)
 			go func() {
 				_ = baileysClient.Run(ctx)
 			}()
 			// Optionally spawn extension subprocess
-			if extProc := channels.SpawnBaileysExtension(baileysURL, "http://localhost:18790/inbound"); extProc != nil {
+			// Extension runs locally; use 127.0.0.1 for callback even when gateway binds 0.0.0.0
+			callbackHost := "127.0.0.1"
+			callbackPort := "18790"
+			if addr != "" {
+				if h, p, err := net.SplitHostPort(addr); err == nil {
+					if h != "" && h != "0.0.0.0" {
+						callbackHost = h
+					}
+					if p != "" {
+						callbackPort = p
+					}
+				}
+			}
+			callbackURL := "http://" + callbackHost + ":" + callbackPort + "/inbound"
+			if extProc := channels.SpawnBaileysExtension(baileysURL, callbackURL); extProc != nil {
 				go func() {
 					_ = extProc.Wait()
 				}()
@@ -309,7 +436,10 @@ func gatewayCmd(args []string, safeMode bool) {
 				mon := monitor.NewHTTPMonitor(m, func(monitorID, message string) {
 					chatID := "broadcast"
 					if len(cfg.Channels.WhatsApp.AllowFrom) > 0 {
-						chatID = cfg.Channels.WhatsApp.AllowFrom[0]
+						chatID = utils.ToWhatsAppJID(cfg.Channels.WhatsApp.AllowFrom[0])
+					}
+					if chatID == "" {
+						chatID = "broadcast"
 					}
 					msgBus.PublishOutbound(bus.OutboundMessage{
 						Channel: "whatsapp",
@@ -324,7 +454,7 @@ func gatewayCmd(args []string, safeMode bool) {
 		health.Set("whatsapp", "disabled")
 		fmt.Println("Gateway running. WhatsApp disabled (set channels.whatsapp.enabled)")
 	}
-	fmt.Println("Health: http://localhost:18790/health")
+	fmt.Printf("Health: http://%s/health\n", addr)
 
 	<-sigCh
 	cancel()
@@ -397,7 +527,12 @@ func getConfigPath(cfg *config.Config, path []string) interface{} {
 		if path[1] == "list" && len(path) == 2 {
 			return cfg.Agents.List
 		}
-	case "task", "timeout_sec":
+	case "task":
+		if len(path) >= 2 && path[1] == "timeout_sec" {
+			return cfg.Task.TimeoutSec
+		}
+		return cfg.Task
+	case "timeout_sec":
 		return cfg.Task.TimeoutSec
 	case "channels":
 		return cfg.Channels
@@ -473,12 +608,20 @@ func auditCmd(args []string) {
 		return
 	}
 	taskID := args[1]
+	if !isValidTaskID(taskID) {
+		fmt.Fprintf(os.Stderr, "Invalid task_id: must be alphanumeric, hyphen, underscore only (max 128 chars)\n")
+		os.Exit(1)
+	}
 	cfg := loadConfig()
 	auditDir := config.ExpandPath(cfg.Audit.Dir)
 	if auditDir == "" {
 		auditDir = config.ExpandPath("~/.sypher-mini/audit")
 	}
-	path := filepath.Join(auditDir, taskID+".log")
+	path, err := safeJoin(auditDir, taskID+".log")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", err)
+		os.Exit(1)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Audit log not found: %v\n", err)
@@ -493,12 +636,20 @@ func replayCmd(args []string) {
 		return
 	}
 	taskID := args[0]
+	if !isValidTaskID(taskID) {
+		fmt.Fprintf(os.Stderr, "Invalid task_id: must be alphanumeric, hyphen, underscore only (max 128 chars)\n")
+		os.Exit(1)
+	}
 	cfg := loadConfig()
 	replayDir := config.ExpandPath("~/.sypher-mini/replay")
 	if cfg.Replay.Dir != "" {
 		replayDir = config.ExpandPath(cfg.Replay.Dir)
 	}
-	path := filepath.Join(replayDir, taskID+".json")
+	path, err := safeJoin(replayDir, taskID+".json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", err)
+		os.Exit(1)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Replay file not found: %v (replay persistence may be disabled)\n", err)
@@ -529,8 +680,12 @@ func cancelCmd(args []string) {
 	if v := os.Getenv("SYPHER_GATEWAY_URL"); v != "" {
 		url = v + "/cancel"
 	}
-	body := fmt.Sprintf(`{"task_id":"%s"}`, taskID)
-	req, err := http.NewRequest("POST", url, strings.NewReader(body))
+	bodyBytes, err := json.Marshal(map[string]string{"task_id": taskID})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Request error: %v\n", err)
+		os.Exit(1)
+	}
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Request error: %v\n", err)
 		os.Exit(1)
@@ -606,7 +761,10 @@ func whatsappCmd(args []string) {
 
 func onboardCmd() {
 	path := config.GetConfigPath()
-	cfg := config.DefaultConfig()
+	cfg, err := config.Load(path)
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
 
 	dir := config.ExpandPath(cfg.Agents.Defaults.Workspace)
 	if err := os.MkdirAll(dir, 0755); err != nil {
