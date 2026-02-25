@@ -11,11 +11,15 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/config"
 )
 
+// ProjectResolver resolves project ID to absolute path. Optional.
+type ProjectResolver func(projectID string) (string, bool)
+
 // InvokeCliAgentTool runs a configured CLI agent (e.g. gemini) with a task.
 type InvokeCliAgentTool struct {
-	cfg       *config.Config
-	workspace string
-	safeMode  bool
+	cfg             *config.Config
+	workspace       string
+	safeMode        bool
+	projectResolver ProjectResolver
 }
 
 // NewInvokeCliAgentTool creates an invoke_cli_agent tool.
@@ -32,6 +36,11 @@ func NewInvokeCliAgentTool(cfg *config.Config, safeMode bool) *InvokeCliAgentToo
 		workspace: workspace,
 		safeMode:  safeMode,
 	}
+}
+
+// SetProjectResolver sets the optional project ID to path resolver.
+func (t *InvokeCliAgentTool) SetProjectResolver(fn ProjectResolver) {
+	t.projectResolver = fn
 }
 
 // Execute runs the CLI agent with the given task.
@@ -53,6 +62,12 @@ func (t *InvokeCliAgentTool) Execute(ctx context.Context, req Request) Response 
 
 	agentID, _ := req.Args["agent_id"].(string)
 	workingDir, _ := req.Args["working_dir"].(string)
+	projectID, _ := req.Args["project"].(string)
+	if workingDir == "" && projectID != "" && t.projectResolver != nil {
+		if resolved, ok := t.projectResolver(projectID); ok {
+			workingDir = resolved
+		}
+	}
 	if workingDir == "" {
 		workingDir = t.workspace
 	}

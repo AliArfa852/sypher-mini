@@ -1,8 +1,8 @@
 # Sypher-mini
 
-**For coders.** A custom solution to implement or get started on that brainfart idea — all through WhatsApp. Work and monitor your projects even when you're not near a laptop or device.
+**Your coding agent in your pocket—and on your desktop.** Work and monitor your projects from WhatsApp, Telegram, or the web portal—even when you're not near a laptop.
 
-A lightweight Go core with optional Node extensions, supporting multiple LLM providers, WhatsApp connectivity, per-task audit logging, and server monitoring.
+A lightweight Go core with optional Node extensions: multi-LLM support, browser automation, WhatsApp & Telegram, ngrok tunnel, web portal for onboarding, and CLI agent orchestration (Gemini, Claude Code, Copilot).
 
 <p>
   <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
@@ -16,10 +16,13 @@ A lightweight Go core with optional Node extensions, supporting multiple LLM pro
 Sypher-mini combines **PicoClaw-style** efficiency with **OpenClaw-style** flexibility. Run commands, check builds, tail logs, and iterate on ideas from your phone — no laptop required.
 
 - **Go core** — Fast, single binary, minimal footprint
-- **Multi-provider** — Cerebras, OpenAI, Anthropic, Gemini with cheap-first routing
-- **WhatsApp** — Bridge (WebSocket) or Baileys extension — your coding assistant in your pocket
+- **Multi-provider** — Cerebras, OpenAI, Anthropic, Gemini, DeepSeek with cheap-first routing
+- **Channels** — WhatsApp (Baileys), Telegram, web portal
+- **Browser tools** — `browser_surf` (navigate, click, type, scroll), `browser_scrape` (JS-rendered content)
+- **CLI agents** — Invoke Gemini CLI, Claude Code, Copilot from chat with project-scoped tasks
+- **Ngrok + portal** — Expose gateway via ngrok; web UI for config, tasks, onboarding
 - **Audit & security** — Per-task command logging, process tracking, deny patterns
-- **Extensible** — Node.js extensions (e.g. WhatsApp Baileys)
+- **Extensible** — Node.js extensions (WhatsApp Baileys, Telegram)
 
 ## Features
 
@@ -36,6 +39,10 @@ Sypher-mini combines **PicoClaw-style** efficiency with **OpenClaw-style** flexi
 | **Health endpoint** | `GET /health` when gateway runs |
 | **Metrics endpoint** | `GET /metrics` for tool/task counters |
 | **Live streaming** | `tail_output`, `stream_command` tools |
+| **Browser automation** | `browser_surf`, `browser_scrape` (Chromedp) |
+| **CLI agent relay** | `invoke_cli_agent` — Gemini, Claude Code, Copilot with project routing |
+| **Web portal** | Task submission, config, monitoring at `/portal` |
+| **Ngrok** | `deployment.ngrok_enabled` + `NGROK_AUTHTOKEN` for public URL |
 | **CLI sessions** | Tagged terminals via WhatsApp: `cli list`, `cli new -m 'tag'`, `cli <N> [--tail N]` |
 | **Extension discovery** | `sypher extensions` lists extensions |
 | **Safe mode** | `--safe` disables exec, LLM, kill |
@@ -90,7 +97,19 @@ export OPENAI_API_KEY="your-key"
 ./sypher agent -m "What is 2+2?"
 ```
 
-### 6. Docker (optional)
+### 6. Web portal (optional)
+
+With `deployment.portal_enabled: true` (default), open `http://localhost:18790/portal` when the gateway is running to submit tasks and monitor progress.
+
+### 7. Ngrok (optional)
+
+For remote access, set `NGROK_AUTHTOKEN` and `deployment.ngrok_enabled: true` in config, then run the gateway. You'll get a public URL for the portal and API.
+
+### 8. Telegram (optional)
+
+Add `extensions/telegram-bot`, set `channels.telegram.enabled: true` and `channels.telegram.bot_token`, then run the gateway. Get a token from [@BotFather](https://t.me/BotFather).
+
+### 9. Docker (optional)
 
 ```bash
 # Build and run
@@ -163,7 +182,8 @@ sypher-mini/
 │   ├── intent/           # Intent parser
 │   └── observability/    # Health, metrics
 ├── extensions/
-│   └── whatsapp-baileys/ # Baileys Node extension
+│   ├── whatsapp-baileys/ # Baileys Node extension
+│   └── telegram-bot/    # Telegram channel extension
 ├── config/
 │   └── config.example.json
 └── docs/                 # Setup and configuration guides

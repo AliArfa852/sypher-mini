@@ -79,8 +79,22 @@ type ContextConfig struct {
 
 // ToolsConfig holds tool-specific config.
 type ToolsConfig struct {
-	Exec          ExecToolConfig          `json:"exec,omitempty"`
-	LiveMonitoring LiveMonitoringConfig   `json:"live_monitoring,omitempty"`
+	Exec           ExecToolConfig        `json:"exec,omitempty"`
+	LiveMonitoring LiveMonitoringConfig  `json:"live_monitoring,omitempty"`
+	BrowserSurf    BrowserSurfConfig     `json:"browser_surf,omitempty"`
+	BrowserScrape  BrowserScrapeConfig   `json:"browser_scrape,omitempty"`
+}
+
+// BrowserSurfConfig holds config for browser_surf tool.
+type BrowserSurfConfig struct {
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	TimeoutSec     int      `json:"timeout_sec"`
+}
+
+// BrowserScrapeConfig holds config for browser_scrape tool.
+type BrowserScrapeConfig struct {
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	TimeoutSec     int      `json:"timeout_sec"`
 }
 
 // LiveMonitoringConfig holds config for tail_output and stream_command.
@@ -163,6 +177,7 @@ type AgentConfig struct {
 	Command          string            `json:"command,omitempty"`
 	Args             []string          `json:"args,omitempty"`
 	AllowedCommands  []string          `json:"allowed_commands,omitempty"`
+	Projects         []string          `json:"projects,omitempty"` // Project paths for invoke_cli_agent routing
 }
 
 // PeerMatch matches a peer for binding.
@@ -187,6 +202,15 @@ type AgentBinding struct {
 // ChannelsConfig holds channel configurations.
 type ChannelsConfig struct {
 	WhatsApp WhatsAppConfig `json:"whatsapp"`
+	Telegram TelegramConfig `json:"telegram"`
+}
+
+// TelegramConfig holds Telegram channel config.
+type TelegramConfig struct {
+	Enabled   bool     `json:"enabled"`
+	BotToken  string   `json:"bot_token"`  // From @BotFather; or use TELEGRAM_BOT_TOKEN env
+	BotURL    string   `json:"bot_url"`    // Extension HTTP endpoint, e.g. http://localhost:3003
+	AllowFrom []string `json:"allow_from"` // Telegram user IDs (e.g. "123456789"); empty = allow all
 }
 
 // WhatsAppConfig holds WhatsApp channel config.
@@ -235,7 +259,10 @@ type TaskConfig struct {
 
 // DeploymentConfig holds deployment mode config.
 type DeploymentConfig struct {
-	Mode string `json:"mode"`
+	Mode         string `json:"mode"`
+	NgrokEnabled bool   `json:"ngrok_enabled"`
+	NgrokDomain  string `json:"ngrok_domain,omitempty"` // Reserved domain (optional)
+	PortalEnabled bool  `json:"portal_enabled"`
 }
 
 // GatewayConfig holds gateway HTTP server config.
@@ -333,6 +360,8 @@ func DefaultConfig() *Config {
 		},
 		Bindings: []AgentBinding{
 			{AgentID: "main", Match: BindingMatch{Channel: "whatsapp", AccountID: "*"}},
+			{AgentID: "main", Match: BindingMatch{Channel: "telegram", AccountID: "*"}},
+			{AgentID: "main", Match: BindingMatch{Channel: "portal", AccountID: "*"}},
 		},
 		AuthorizedTerminals: []string{"default"},
 		Channels: ChannelsConfig{
@@ -343,6 +372,11 @@ func DefaultConfig() *Config {
 				UseBaileys: true, // QR connection is default when WhatsApp enabled
 				AllowFrom:  []string{},
 			},
+			Telegram: TelegramConfig{
+				Enabled:   false,
+				BotURL:    "http://localhost:3003",
+				AllowFrom: []string{},
+			},
 		},
 		Providers: ProvidersConfig{
 			RoutingStrategy: "cheap_first",
@@ -352,7 +386,8 @@ func DefaultConfig() *Config {
 			RetryMax:   2,
 		},
 		Deployment: DeploymentConfig{
-			Mode: "local_dev",
+			Mode:          "local_dev",
+			PortalEnabled: true,
 		},
 		Audit: AuditConfig{
 			Dir:           filepath.Join(home, ".sypher-mini", "audit"),

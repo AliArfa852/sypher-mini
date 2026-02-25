@@ -27,7 +27,9 @@ import (
 	"github.com/sypherexx/sypher-mini/pkg/extensions"
 	"github.com/sypherexx/sypher-mini/pkg/monitor"
 	"github.com/sypherexx/sypher-mini/pkg/observability"
+	"github.com/sypherexx/sypher-mini/pkg/portal"
 	"github.com/sypherexx/sypher-mini/pkg/utils"
+	"golang.ngrok.com/ngrok/v2"
 )
 
 var version = "dev"
@@ -189,6 +191,19 @@ func isAllowedSender(from string, allowFrom []string) bool {
 	return false
 }
 
+// isAllowedSenderTelegram returns true if from is allowed (empty allow_from = allow all).
+func isAllowedSenderTelegram(from string, allowFrom []string) bool {
+	if len(allowFrom) == 0 {
+		return true
+	}
+	for _, a := range allowFrom {
+		if a == from || strings.TrimSpace(a) == strings.TrimSpace(from) {
+			return true
+		}
+	}
+	return false
+}
+
 func agentCmd(args []string, safeMode bool) {
 	cfg := loadConfig()
 
@@ -264,6 +279,9 @@ func gatewayCmd(args []string, safeMode bool) {
 	health.Set("core", "ok")
 	mux := http.NewServeMux()
 	mux.Handle("/health", health.Handler())
+	if cfg.Deployment.PortalEnabled {
+		portal.Register(mux, cfg, loop, msgBus)
+	}
 	if m := loop.Metrics(); m != nil {
 		mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
@@ -318,8 +336,9 @@ func gatewayCmd(args []string, safeMode bool) {
 		r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 		var payload struct {
 			Type    string `json:"type"`
+			Channel string `json:"channel"` // whatsapp, telegram, etc.; default whatsapp
 			From    string `json:"from"`
-			FromPn  string `json:"from_pn"` // Phone number JID when from is LID - for allow_from matching
+			FromPn  string `json:"from_pn"` // Phone number JID when from is LID (WhatsApp) - for allow_from matching
 			Content string `json:"content"`
 			ChatID  string `json:"chat_id"`
 		}
@@ -327,15 +346,26 @@ func gatewayCmd(args []string, safeMode bool) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
+		channel := payload.Channel
+		if channel == "" {
+			channel = "whatsapp"
+		}
 		// Enforce allow_from: drop messages from non-allowed senders (silent)
-		// Use from_pn (phone number) when available for LID messages - matches user's +923406498469 etc
 		fromForAllow := payload.From
-		if payload.FromPn != "" {
+		if payload.FromPn != "" && channel == "whatsapp" {
 			fromForAllow = payload.FromPn
 		}
-		if !isAllowedSender(fromForAllow, cfg.Channels.WhatsApp.AllowFrom) {
-			// When from is LID, from_pn (phone) may be sent by extension for matching - if missing, add LID digits
-			log.Printf("[gateway] inbound dropped: from=%q not in allow_from (add phone e.g. +923406498469 or LID digits %q)", payload.From, utils.NormalizeWhatsAppID(payload.From))
+		var allowed bool
+		switch channel {
+		case "whatsapp":
+			allowed = isAllowedSender(fromForAllow, cfg.Channels.WhatsApp.AllowFrom)
+		case "telegram":
+			allowed = isAllowedSenderTelegram(fromForAllow, cfg.Channels.Telegram.AllowFrom)
+		default:
+			allowed = true
+		}
+		if !allowed {
+			log.Printf("[gateway] inbound dropped: channel=%q from=%q not in allow_from", channel, payload.From)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 			return
@@ -350,12 +380,12 @@ func gatewayCmd(args []string, safeMode bool) {
 			chatID = payload.From
 		}
 		senderID := payload.From
-		if payload.FromPn != "" {
+		if payload.FromPn != "" && channel == "whatsapp" {
 			senderID = payload.FromPn
 		}
-		log.Printf("[gateway] inbound from=%q content=%q", payload.From, truncateForLog(content, 60))
+		log.Printf("[gateway] inbound channel=%q from=%q content=%q", channel, payload.From, truncateForLog(content, 60))
 		msgBus.PublishInbound(bus.InboundMessage{
-			Channel:  "whatsapp",
+			Channel:  channel,
 			ChatID:   chatID,
 			Content:  content,
 			SenderID: senderID,
@@ -367,9 +397,27 @@ func gatewayCmd(args []string, safeMode bool) {
 	if addr == "" {
 		addr = "127.0.0.1:18790"
 	}
-	srv := &http.Server{Addr: addr, Handler: mux}
+	var listener net.Listener
+	if cfg.Deployment.NgrokEnabled && os.Getenv("NGROK_AUTHTOKEN") != "" {
+		ln, err := ngrok.Listen(ctx)
+		if err != nil {
+			log.Printf("ngrok listen failed: %v (falling back to local)", err)
+			listener, _ = net.Listen("tcp", addr)
+		} else {
+			listener = ln
+			fmt.Printf("ngrok tunnel: %s\n", ln.Addr().String())
+		}
+	}
+	if listener == nil {
+		var err error
+		listener, err = net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatalf("listen: %v", err)
+		}
+	}
+	srv := &http.Server{Handler: mux}
 	go func() {
-		_ = srv.ListenAndServe()
+		_ = srv.Serve(listener)
 	}()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -454,6 +502,42 @@ func gatewayCmd(args []string, safeMode bool) {
 		health.Set("whatsapp", "disabled")
 		fmt.Println("Gateway running. WhatsApp disabled (set channels.whatsapp.enabled)")
 	}
+
+	if cfg.Channels.Telegram.Enabled {
+		health.Set("telegram", "ok")
+		botURL := cfg.Channels.Telegram.BotURL
+		if botURL == "" {
+			botURL = "http://localhost:3003"
+		}
+		tgClient := channels.NewTelegramClient(botURL, msgBus, 12)
+		go func() {
+			_ = tgClient.Run(ctx)
+		}()
+		callbackHost := "127.0.0.1"
+		callbackPort := "18790"
+		if addr != "" {
+			if h, p, err := net.SplitHostPort(addr); err == nil {
+				if h != "" && h != "0.0.0.0" {
+					callbackHost = h
+				}
+				if p != "" {
+					callbackPort = p
+				}
+			}
+		}
+		callbackURL := "http://" + callbackHost + ":" + callbackPort + "/inbound"
+		if extProc := channels.SpawnTelegramExtension(&cfg.Channels.Telegram, callbackURL); extProc != nil {
+			go func() {
+				_ = extProc.Wait()
+			}()
+			fmt.Printf("Gateway running. Telegram: %s (extension spawned)\n", botURL)
+		} else {
+			fmt.Printf("Gateway running. Telegram: %s (run extension separately: cd extensions/telegram-bot && TELEGRAM_BOT_TOKEN=xxx npm start)\n", botURL)
+		}
+	} else {
+		health.Set("telegram", "disabled")
+	}
+
 	fmt.Printf("Health: http://%s/health\n", addr)
 
 	<-sigCh

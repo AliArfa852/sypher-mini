@@ -93,6 +93,8 @@
     "dir": "~/.sypher-mini/replay"
   },
   "deployment": {
-    "mode": "local_dev"
+    "mode": "local_dev",
+    "ngrok_enabled": false,
+    "portal_enabled": true
   }
 }

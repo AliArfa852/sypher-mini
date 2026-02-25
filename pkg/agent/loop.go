@@ -40,6 +40,8 @@ type Loop struct {
 	execTool         *tools.ExecTool
 	killTool         *tools.KillTool
 	webFetch         *tools.WebFetchTool
+	browserSurf      *tools.BrowserSurfTool
+	browserScrape    *tools.BrowserScrapeTool
 	messageTool      *tools.MessageTool
 	tailOutput       *tools.TailOutputTool
 	streamCommand    *tools.StreamCommandTool
@@ -88,6 +90,8 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	killTool := tools.NewKillTool(procTracker, opts.SafeMode)
 	policyEval := policy.NewEvaluator(cfg)
 	webFetch := tools.NewWebFetchTool(cfg, policyEval, opts.SafeMode)
+	browserSurf := tools.NewBrowserSurfTool(cfg, policyEval, opts.SafeMode)
+	browserScrape := tools.NewBrowserScrapeTool(cfg, policyEval, opts.SafeMode)
 	messageTool := tools.NewMessageTool(msgBus, opts.SafeMode)
 	tailOutput := tools.NewTailOutputTool(cfg, opts.SafeMode)
 	streamCommand := tools.NewStreamCommandTool(cfg, msgBus, messageTool, opts.SafeMode)
@@ -114,6 +118,8 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 		execTool:       execTool,
 		killTool:       killTool,
 		webFetch:       webFetch,
+		browserSurf:    browserSurf,
+		browserScrape:  browserScrape,
 		messageTool:    messageTool,
 		tailOutput:     tailOutput,
 		streamCommand:  streamCommand,
@@ -133,6 +139,13 @@ func NewLoop(cfg *config.Config, msgBus *bus.MessageBus, eventBus *bus.Bus, opts
 	}
 	l.projectStore = project.NewStore(workspace)
 	l.menuHandler = menu.NewHandler(cfg, l, "")
+	invokeCliAgent.SetProjectResolver(func(projectID string) (string, bool) {
+		p, err := l.projectStore.Get(projectID)
+		if err != nil || p == nil {
+			return "", false
+		}
+		return p.AbsPath(cfg.Agents.Defaults.Workspace), true
+	})
 	// Wire project dirs into exec tool so CLI/exec can run in registered project dirs
 	execTool.SetProjectDirsResolver(func() []string {
 		projects, err := l.projectStore.List()
@@ -235,6 +248,39 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 		{
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
+				Name:        "browser_surf",
+				Description: "Navigate and interact with web pages. Use for multi-step flows, form filling, or dynamic content. Actions: navigate, click, type, scroll, snapshot.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"action":   map[string]interface{}{"type": "string", "description": "Action: navigate, click, type, scroll, or snapshot"},
+						"url":      map[string]interface{}{"type": "string", "description": "URL to load (required for all actions)"},
+						"selector": map[string]interface{}{"type": "string", "description": "CSS selector for click/type (required for those actions)"},
+						"text":     map[string]interface{}{"type": "string", "description": "Text to type (for type action)"},
+					},
+					"required": []interface{}{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
+				Name:        "browser_scrape",
+				Description: "Extract structured content from a web page (tables, lists, elements). Renders JavaScript. Use when web_fetch returns incomplete or JS-rendered content.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"url":      map[string]interface{}{"type": "string", "description": "URL to scrape"},
+						"selector": map[string]interface{}{"type": "string", "description": "Optional CSS selector to extract (default: body)"},
+						"format":   map[string]interface{}{"type": "string", "description": "Output format: markdown or json (default: markdown)"},
+					},
+					"required": []interface{}{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
 				Name:        "message",
 				Description: "Send a message to the user in the current conversation.",
 				Parameters: map[string]interface{}{
@@ -280,13 +326,14 @@ func (l *Loop) toolDefinitions() []providers.ToolDefinition {
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
 				Name:        "invoke_cli_agent",
-				Description: "Invoke a configured CLI agent (e.g. Gemini CLI) with a task. Use for code generation when an agent with command/args is configured.",
+				Description: "Invoke a configured CLI agent (e.g. Gemini CLI, Claude Code, Copilot) with a task. Use for code generation. When user says 'tell Gemini to X on project Y', use agent_id and project. Agents: gemini-cli, claude-cli, copilot-cli.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"task":        map[string]interface{}{"type": "string", "description": "Task/prompt for the CLI agent"},
-						"agent_id":    map[string]interface{}{"type": "string", "description": "Agent ID to use (optional; uses first agent with command/args if omitted)"},
+						"agent_id":    map[string]interface{}{"type": "string", "description": "Agent ID (e.g. gemini-cli, claude-cli, copilot-cli); optional"},
 						"working_dir": map[string]interface{}{"type": "string", "description": "Working directory (optional)"},
+						"project":     map[string]interface{}{"type": "string", "description": "Project ID from code-projects (e.g. sypher-mini); resolves to working_dir"},
 					},
 					"required": []interface{}{"task"},
 				},
@@ -305,6 +352,22 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 			senderNorm := utils.NormalizeWhatsAppID(msg.SenderID)
 			for _, a := range allowFrom {
 				if a == msg.SenderID || (senderNorm != "" && utils.NormalizeWhatsAppID(a) == senderNorm) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return "", nil // Silent drop; no response
+			}
+		}
+	}
+	// Telegram: enforce allow_from (silent drop if sender not allowed)
+	if msg.Channel == "telegram" {
+		allowFrom := l.cfg.Channels.Telegram.AllowFrom
+		if len(allowFrom) > 0 {
+			allowed := false
+			for _, a := range allowFrom {
+				if a == msg.SenderID || strings.TrimSpace(a) == strings.TrimSpace(msg.SenderID) {
 					allowed = true
 					break
 				}
@@ -481,6 +544,10 @@ func (l *Loop) processMessage(ctx context.Context, msg bus.InboundMessage) (stri
 					toolResp = l.killTool.Execute(ctx, req)
 				case "web_fetch":
 					toolResp = l.webFetch.Execute(ctx, req)
+				case "browser_surf":
+					toolResp = l.browserSurf.Execute(ctx, req)
+				case "browser_scrape":
+					toolResp = l.browserScrape.Execute(ctx, req)
 				case "message":
 					toolResp = l.messageTool.Execute(ctx, req)
 				case "tail_output":
@@ -1220,4 +1287,41 @@ func (l *Loop) CancelTask(taskID string) bool {
 // Metrics returns the metrics collector for observability.
 func (l *Loop) Metrics() *observability.Metrics {
 	return l.metrics
+}
+
+// TaskInfo holds task data for API responses.
+type TaskInfo struct {
+	ID        string    `json:"id"`
+	State     string    `json:"state"`
+	AgentID   string    `json:"agent_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListTasks returns active tasks for the portal API.
+func (l *Loop) ListTasks() []TaskInfo {
+	tasks := l.taskMgr.List()
+	out := make([]TaskInfo, len(tasks))
+	for i, t := range tasks {
+		out[i] = TaskInfo{
+			ID:        t.ID,
+			State:     string(t.GetState()),
+			AgentID:   t.AgentID,
+			CreatedAt: t.CreatedAt,
+		}
+	}
+	return out
+}
+
+// GetTask returns task info by ID, or false if not found.
+func (l *Loop) GetTask(id string) (TaskInfo, bool) {
+	t, ok := l.taskMgr.Get(id)
+	if !ok {
+		return TaskInfo{}, false
+	}
+	return TaskInfo{
+		ID:        t.ID,
+		State:     string(t.GetState()),
+		AgentID:   t.AgentID,
+		CreatedAt: t.CreatedAt,
+	}, true
 }
